@@ -1,0 +1,8 @@
+/config/HTSx1VNWNBDGtfwr2nU8gSzhxfFtUxd2nkdFq7SCSZzY.json
+target
+node_modules
+.anchor
+.yarn
+Cargo.lock
+yarn.lock
+package-lock.json
