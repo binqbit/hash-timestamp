@@ -6,6 +6,7 @@ import {
   Keypair,
   Connection,
   TransactionSignature,
+  AccountInfo,
 } from "@solana/web3.js";
 import { createHash } from "crypto";
 import { HashTimestamp } from "../../target/types/hash_timestamp";
@@ -37,8 +38,9 @@ export type HashBytes = Uint8Array | Buffer | number[] | string;
 
 export enum HashType {
   Hash = 0,
-  Branch = 1,
-  Batch = 2,
+  Account = 1,
+  Branch = 2,
+  Batch = 3,
 }
 
 export function to32Bytes(input: HashBytes): Uint8Array {
@@ -81,6 +83,60 @@ export function deriveUpdatedHash(
 
 export function deriveGenesisHashId(payload: HashBytes): Uint8Array {
   return deriveUpdatedHash(GENESIS_HASH, 0, payload, HashType.Hash);
+}
+
+function toBoolByte(value: boolean): Uint8Array {
+  return new Uint8Array([value ? 1 : 0]);
+}
+
+export function deriveAccountMetadataHash(
+  account: PublicKey,
+  info: AccountInfo<Buffer>
+): Uint8Array {
+  const hasher = createHash("sha256");
+  hasher.update(account.toBuffer());
+  hasher.update(info.owner.toBuffer());
+
+  const lamports = Buffer.alloc(8);
+  lamports.writeBigUInt64LE(numberToU64(info.lamports));
+  hasher.update(new Uint8Array(lamports));
+
+  hasher.update(toBoolByte(info.executable));
+
+  const rentEpoch = Buffer.alloc(8);
+  rentEpoch.writeBigUInt64LE(numberToU64(info.rentEpoch));
+  hasher.update(new Uint8Array(rentEpoch));
+
+  const dataLength = Buffer.alloc(8);
+  dataLength.writeBigUInt64LE(BigInt(info.data.length));
+  hasher.update(new Uint8Array(dataLength));
+  hasher.update(info.data);
+
+  return new Uint8Array(hasher.digest());
+}
+
+export function deriveAccountHashId(
+  account: PublicKey,
+  info: AccountInfo<Buffer>
+): Uint8Array {
+  const metadataHash = deriveAccountMetadataHash(account, info);
+  return deriveUpdatedHash(GENESIS_HASH, 0, metadataHash, HashType.Account);
+}
+
+function numberToU64(value: number): bigint {
+  if (!Number.isFinite(value)) {
+    throw new Error("value must be a finite number");
+  }
+  if (value < 0) {
+    throw new Error("value must be non-negative");
+  }
+  const max = (BigInt(1) << BigInt(64)) - BigInt(1);
+  const truncated = Math.floor(value);
+  let bigint = BigInt(truncated);
+  if (bigint > max) {
+    bigint = max;
+  }
+  return bigint;
 }
 
 type NumericLike = number | bigint | anchor.BN;
@@ -432,6 +488,49 @@ export class HashTimestampClient {
       : await builder.rpc();
 
     return { signature, batchId };
+  }
+
+  async hashAccount(
+    target: PublicKey,
+    payer?: Keypair
+  ): Promise<{
+    signature: TransactionSignature;
+    hashId: Uint8Array;
+    metadataHash: Uint8Array;
+  }> {
+    const provider = this.program.provider as anchor.AnchorProvider;
+    const walletPk = payer ? payer.publicKey : provider.wallet.publicKey;
+
+    const info = await this.connection.getAccountInfo(target);
+    if (!info) {
+      throw new Error("target account not found");
+    }
+
+    const metadataHash = deriveAccountMetadataHash(target, info);
+    const hashId = deriveUpdatedHash(
+      GENESIS_HASH,
+      0,
+      metadataHash,
+      HashType.Account
+    );
+    const hashPda = this.hashPda(hashId);
+    const votePda = this.votePda(hashPda, walletPk);
+
+    const builder = this.program.methods
+      .accountHash()
+      .accountsStrict({
+        hashAccount: hashPda,
+        voteInfo: votePda,
+        target,
+        payer: walletPk,
+        systemProgram: SystemProgram.programId,
+      });
+
+    const signature = payer
+      ? await builder.signers([payer]).rpc()
+      : await builder.rpc();
+
+    return { signature, hashId, metadataHash };
   }
 
   // Account helpers
