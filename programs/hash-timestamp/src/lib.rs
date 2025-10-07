@@ -38,6 +38,11 @@ pub mod hash_timestamp {
     pub fn verify(ctx: Context<Verify>) -> Result<()> {
         handlers::verify(ctx)
     }
+
+    // Create a batch hash that aggregates several existing hashes.
+    pub fn batch(ctx: Context<Batch>) -> Result<()> {
+        handlers::batch(ctx)
+    }
 }
 
 #[error_code]
@@ -62,4 +67,8 @@ pub enum ErrorCode {
     GenerationOverflow,
     #[msg("Hash already exists")]
     HashAlreadyExists,
+    #[msg("Batch requires at least one member")]
+    BatchMembersEmpty,
+    #[msg("Batch member account not owned by the program")]
+    BatchMemberWrongProgram,
 }
