@@ -104,7 +104,7 @@ function toI64Bytes(value: NumericLike): Uint8Array {
 
 function toU64Bytes(value: NumericLike): Uint8Array {
   const bigintValue = toBigInt(value);
-  if (bigintValue < 0n) {
+  if (bigintValue < BigInt(0)) {
     throw new Error("value must be non-negative");
   }
   const buf = Buffer.alloc(8);
@@ -385,7 +385,7 @@ export class HashTimestampClient {
         (account as any).previous_block ??
         null;
       if (!prev) {
-        return 0n;
+        return BigInt(0);
       }
       const prevHashRaw =
         pickField(prev, "hashId", "hash_id", "hash") ?? new Uint8Array(32);
@@ -398,8 +398,8 @@ export class HashTimestampClient {
       );
       const isZeroHash = prevHash.every((value) => value === 0);
       const isGenesisPrev =
-        isZeroHash && prevCreated === 0n && prevGeneration === 0n;
-      return isGenesisPrev ? 0n : prevGeneration + 1n;
+        isZeroHash && prevCreated === BigInt(0) && prevGeneration === BigInt(0);
+      return isGenesisPrev ? BigInt(0) : prevGeneration + BigInt(1);
     });
 
     const batchId = deriveBatchHashId(
