@@ -1,19 +1,14 @@
 use anchor_lang::prelude::*;
 
+use crate::logic::ensure_hash_initialized;
 use crate::state::HashAccount;
-use crate::ErrorCode;
 
 #[derive(Accounts)]
-#[instruction(hash: [u8; 32])]
 pub struct Verify<'info> {
-    #[account(
-        seeds = [b"hash", hash.as_ref()],
-        bump = hash_account.bump,
-        constraint = hash_account.hash == hash @ ErrorCode::InvalidHashSeeds,
-    )]
+    #[account(mut)]
     pub hash_account: Account<'info, HashAccount>,
 }
 
-pub fn verify(_ctx: Context<Verify>, _hash: [u8; 32]) -> Result<()> {
-    Ok(())
+pub fn verify(ctx: Context<Verify>) -> Result<()> {
+    ensure_hash_initialized(&ctx.accounts.hash_account, ctx.program_id).map(|_| ())
 }
