@@ -23,6 +23,11 @@ pub mod hash_timestamp {
         handlers::branch(ctx, new_hash, take_vote)
     }
 
+    // Create a batch hash that aggregates several existing hashes.
+    pub fn batch(ctx: Context<Batch>) -> Result<()> {
+        handlers::batch(ctx)
+    }
+
     // Vote for a hash; create the hash account if missing;
     // deposit exactly the rent-exempt minimum for this account size.
     pub fn vote(ctx: Context<Vote>) -> Result<()> {
@@ -37,11 +42,6 @@ pub mod hash_timestamp {
     // Verify that the hash account exists (no-op if OK).
     pub fn verify(ctx: Context<Verify>) -> Result<()> {
         handlers::verify(ctx)
-    }
-
-    // Create a batch hash that aggregates several existing hashes.
-    pub fn batch(ctx: Context<Batch>) -> Result<()> {
-        handlers::batch(ctx)
     }
 }
 
