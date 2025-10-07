@@ -18,6 +18,11 @@ pub mod hash_timestamp {
         handlers::register(ctx, hash)
     }
 
+    // Produce a hash account from an arbitrary account's metadata.
+    pub fn account_hash(ctx: Context<AccountHash>) -> Result<()> {
+        handlers::account_hash(ctx)
+    }
+
     // Derive a new hash from an existing one and optionally migrate the caller's vote.
     pub fn branch(ctx: Context<Branch>, new_hash: [u8; 32], take_vote: bool) -> Result<()> {
         handlers::branch(ctx, new_hash, take_vote)

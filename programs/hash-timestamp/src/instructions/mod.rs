@@ -1,3 +1,4 @@
+mod account_hash;
 mod batch;
 mod branch;
 mod register;
@@ -5,6 +6,7 @@ mod unvote;
 mod verify;
 mod vote;
 
+pub use account_hash::*;
 pub use batch::*;
 pub use branch::*;
 pub use register::*;
@@ -13,6 +15,7 @@ pub use verify::*;
 pub use vote::*;
 
 pub mod handlers {
+    pub use super::account_hash::account_hash;
     pub use super::batch::batch;
     pub use super::branch::branch;
     pub use super::register::register;

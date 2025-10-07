@@ -28,8 +28,9 @@ pub const VOTE_INFO_SPACE: usize = 8 /*disc*/
 #[repr(u8)]
 pub enum HashType {
     Hash = 0,
-    Branch = 1,
-    Batch = 2,
+    Account = 1,
+    Branch = 2,
+    Batch = 3,
 }
 
 impl Default for HashType {
@@ -100,7 +101,10 @@ impl HashAccount {
     }
 
     pub fn current_generation(&self) -> u64 {
-        if self.hash_type == HashType::Hash || self.hash_type == HashType::Batch {
+        if matches!(
+            self.hash_type,
+            HashType::Hash | HashType::Account | HashType::Batch
+        ) {
             0
         } else {
             self.previous.generation.saturating_add(1)
