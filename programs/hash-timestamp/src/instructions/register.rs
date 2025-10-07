@@ -3,7 +3,7 @@ use anchor_lang::prelude::*;
 use crate::logic::{
     derive_hash, derive_vote, genesis_previous_block, new_hash_state, new_vote_state,
 };
-use crate::state::{HASH_ACCOUNT_SPACE, VOTE_INFO_SPACE};
+use crate::state::{HashType, HASH_ACCOUNT_SPACE, VOTE_INFO_SPACE};
 use crate::utils::{
     create_account_with_seeds, minimum_hash_rent, minimum_vote_rent, write_account,
 };
@@ -32,7 +32,7 @@ pub fn register(ctx: Context<Register>, hash: [u8; 32]) -> Result<()> {
     let system_program = ctx.accounts.system_program.to_account_info();
 
     let previous = genesis_previous_block();
-    let hash_meta = derive_hash(ctx.program_id, &previous, &hash);
+    let hash_meta = derive_hash(ctx.program_id, &previous, &hash, HashType::Hash);
     require_keys_eq!(
         hash_account.key(),
         hash_meta.key,
@@ -63,7 +63,7 @@ pub fn register(ctx: Context<Register>, hash: [u8; 32]) -> Result<()> {
         &system_program,
     )?;
 
-    let hash_state = new_hash_state(previous, hash, hash_meta.bump)?;
+    let hash_state = new_hash_state(previous, hash, HashType::Hash, hash_meta.bump)?;
     write_account(hash_account, &hash_state)?;
 
     let vote_seeds = vote_meta.seeds();

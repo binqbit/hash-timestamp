@@ -7,7 +7,7 @@ use crate::logic::{
     assert_system_program_placeholder, derive_hash, derive_vote, ensure_hash_initialized,
     ensure_vote_matches, ensure_vote_owned, new_hash_state, new_vote_state,
 };
-use crate::state::{HashAccount, HASH_ACCOUNT_SPACE, VOTE_INFO_SPACE};
+use crate::state::{HashAccount, HashType, HASH_ACCOUNT_SPACE, VOTE_INFO_SPACE};
 use crate::utils::{
     allocate_pda_account, close_account, minimum_hash_rent, minimum_vote_rent, move_lamports,
     write_account,
@@ -49,7 +49,7 @@ pub fn branch(ctx: Context<Branch>, new_hash: [u8; 32], take_vote: bool) -> Resu
     let hash_snapshot = ensure_hash_initialized(old_hash, ctx.program_id)?;
     let previous_block = hash_snapshot.previous_block();
 
-    let new_hash_meta = derive_hash(ctx.program_id, &previous_block, &new_hash);
+    let new_hash_meta = derive_hash(ctx.program_id, &previous_block, &new_hash, HashType::Branch);
     require_keys_eq!(
         new_hash_meta.key,
         new_hash_account.key(),
@@ -109,7 +109,12 @@ pub fn branch(ctx: Context<Branch>, new_hash: [u8; 32], take_vote: bool) -> Resu
         &system_program,
     )?;
 
-    let hash_state = new_hash_state(previous_block, new_hash, new_hash_meta.bump)?;
+    let hash_state = new_hash_state(
+        previous_block,
+        new_hash,
+        HashType::Branch,
+        new_hash_meta.bump,
+    )?;
     write_account(new_hash_account, &hash_state)?;
 
     if !take_vote {
