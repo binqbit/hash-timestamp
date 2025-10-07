@@ -11,6 +11,9 @@ import { HashTimestamp } from "../target/types/hash_timestamp";
 import { expect } from "chai";
 import {
   HashTimestampClient,
+  HashType,
+  deriveBatchPayloadHash,
+  deriveBatchHashId,
   deriveGenesisHashId,
   deriveUpdatedHash,
   rentExemptForHash,
@@ -23,8 +26,52 @@ anchor.setProvider(provider);
 const program = anchor.workspace.HashTimestamp as Program<HashTimestamp>;
 const client = new HashTimestampClient(program);
 
-const toNum = (value: any): number =>
-  typeof value === "number" ? value : value.toNumber();
+const toNum = (value: any): number => {
+  if (typeof value === "number") return value;
+  if (typeof value === "bigint") return Number(value);
+  if (value && typeof value.toNumber === "function") return value.toNumber();
+  if (value && typeof value.toString === "function") {
+    const parsed = Number(value.toString());
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  throw new TypeError("Unable to coerce value to number");
+};
+
+const toHashType = (value: any): HashType => {
+  if (value == null) {
+    throw new TypeError("hash type is nullish");
+  }
+
+  if (typeof value === "number") {
+    return value as HashType;
+  }
+
+  if (typeof value === "bigint") {
+    return Number(value) as HashType;
+  }
+
+  if (typeof value.toNumber === "function") {
+    return value.toNumber() as HashType;
+  }
+
+  if (Array.isArray(value) && value.length > 0) {
+    return toHashType(value[0]);
+  }
+
+  const keys = Object.keys(value);
+  for (const key of keys) {
+    switch (key.toLowerCase()) {
+      case "hash":
+        return HashType.Hash;
+      case "branch":
+        return HashType.Branch;
+      case "batch":
+        return HashType.Batch;
+    }
+  }
+
+  throw new TypeError(`Unknown hash type representation: ${JSON.stringify(value)}`);
+};
 
 const randomHash = () => Keypair.generate().publicKey.toBuffer();
 
@@ -82,6 +129,8 @@ describe("hash-timestamp", () => {
     expect(toNum(account!.previous.createdAt)).to.eq(0);
     expect(toNum(account!.previous.generation)).to.eq(0);
     expect(generationOf(account!)).to.eq(0);
+    const accountHashType = (account as any).hashType ?? (account as any).hash_type;
+    expect(toHashType(accountHashType)).to.eq(HashType.Hash);
     expect(await hashLamports(hashId)).to.eq(rentMin);
 
     const voteInfo = await client.fetchVoteInfo(
@@ -243,7 +292,12 @@ describe("hash-timestamp", () => {
     const generation = generationOf(before!);
 
     const newPayload = randomHash();
-    const derivedId = deriveUpdatedHash(hashId, createdAt, newPayload);
+    const derivedId = deriveUpdatedHash(
+      hashId,
+      createdAt,
+      newPayload,
+      HashType.Branch
+    );
 
     await client.branch(hashId, newPayload, true);
 
@@ -319,7 +373,12 @@ describe("hash-timestamp", () => {
     const oldVoteLamports = await voteLamports(hashId, provider.wallet.publicKey);
 
     const newPayload = randomHash();
-    const derivedId = deriveUpdatedHash(hashId, createdAt, newPayload);
+    const derivedId = deriveUpdatedHash(
+      hashId,
+      createdAt,
+      newPayload,
+      HashType.Branch
+    );
 
     await client.branch(hashId, newPayload, true);
 
@@ -339,6 +398,9 @@ describe("hash-timestamp", () => {
     expect(Buffer.from(newAccount!.hash)).to.deep.equal(newPayload);
     expect(generationOf(newAccount!)).to.eq(generationOf(oldAccount!) + 1);
     expect(toNum(newAccount!.voters)).to.eq(1);
+    const newHashType =
+      (newAccount as any).hashType ?? (newAccount as any).hash_type;
+    expect(toHashType(newHashType)).to.eq(HashType.Branch);
 
     const voteInfo = await client.fetchVoteInfo(
       derivedId,
@@ -363,12 +425,20 @@ describe("hash-timestamp", () => {
     const createdAt = toNum(baseAccount!.createdAt);
 
     const newPayload = randomHash();
-    const derivedId = deriveUpdatedHash(baseId, createdAt, newPayload);
+    const derivedId = deriveUpdatedHash(
+      baseId,
+      createdAt,
+      newPayload,
+      HashType.Branch
+    );
 
     await client.branch(baseId, newPayload, false);
 
     const baseAfter = await client.fetchHashAccount(baseId);
     expect(baseAfter).to.not.equal(null);
+    const baseType =
+      (baseAfter as any).hashType ?? (baseAfter as any).hash_type;
+    expect(toHashType(baseType)).to.eq(HashType.Hash);
     expect(toNum(baseAfter!.voters)).to.eq(1);
     expect(await voteLamports(baseId, provider.wallet.publicKey)).to.eq(
       voteRentMin
@@ -385,12 +455,81 @@ describe("hash-timestamp", () => {
     );
     expect(generationOf(newAccount!)).to.eq(generationOf(baseAfter!) + 1);
     expect(toNum(newAccount!.voters)).to.eq(1);
+    const branchType =
+      (newAccount as any).hashType ?? (newAccount as any).hash_type;
+    expect(toHashType(branchType)).to.eq(HashType.Branch);
     expect(await voteLamports(derivedId, provider.wallet.publicKey)).to.eq(
       voteRentMin
     );
 
     await client.unvote(derivedId);
     await client.unvote(baseId);
+  });
+
+  it("creates a batch hash aggregating multiple accounts", async () => {
+    const payloadA = randomHash();
+    const payloadB = randomHash();
+    const hashIdA = deriveGenesisHashId(payloadA);
+    const hashIdB = deriveGenesisHashId(payloadB);
+
+    await client.register(payloadA);
+    await client.register(payloadB);
+
+    const accountA = await client.fetchHashAccount(hashIdA);
+    const accountB = await client.fetchHashAccount(hashIdB);
+    expect(accountA).to.not.equal(null);
+    expect(accountB).to.not.equal(null);
+
+    const memberCreatedAts = [
+      toNum(accountA!.createdAt ?? (accountA as any).created_at),
+      toNum(accountB!.createdAt ?? (accountB as any).created_at),
+    ];
+    const memberGenerations = [
+      generationOf(accountA!),
+      generationOf(accountB!),
+    ];
+    const expectedBatchHash = deriveBatchPayloadHash(
+      [hashIdA, hashIdB],
+      memberCreatedAts,
+      memberGenerations
+    );
+    const expectedBatchId = deriveBatchHashId(
+      [hashIdA, hashIdB],
+      memberCreatedAts,
+      memberGenerations
+    );
+    const { batchId } = await client.batch([hashIdA, hashIdB]);
+    expect(Buffer.from(batchId)).to.deep.equal(Buffer.from(expectedBatchId));
+
+    const batchAccount = await client.fetchHashAccount(batchId);
+    expect(batchAccount).to.not.equal(null);
+    const batchType =
+      (batchAccount as any).hashType ?? (batchAccount as any).hash_type;
+    expect(toHashType(batchType)).to.eq(HashType.Batch);
+    expect(Buffer.from(batchAccount!.previous.hashId)).to.deep.equal(
+      Buffer.from(zeroHash)
+    );
+    expect(toNum(batchAccount!.previous.createdAt)).to.eq(0);
+    expect(toNum(batchAccount!.previous.generation)).to.eq(0);
+    expect(Buffer.from(batchAccount!.hash)).to.deep.equal(
+      Buffer.from(expectedBatchHash)
+    );
+    expect(toNum(batchAccount!.createdAt)).to.be.greaterThan(0);
+    expect(toNum(batchAccount!.voters)).to.eq(1);
+    const batchVote = await client.fetchVoteInfo(
+      batchId,
+      provider.wallet.publicKey
+    );
+    expect(batchVote).to.not.equal(null);
+    expect(toNum(batchVote!.amount)).to.eq(rentMin);
+    expect(await voteLamports(batchId, provider.wallet.publicKey)).to.eq(
+      voteRentMin
+    );
+    expect(await hashLamports(batchId)).to.eq(rentMin);
+
+    await client.unvote(batchId);
+    await client.unvote(hashIdA);
+    await client.unvote(hashIdB);
   });
 
   it("requires an existing vote when migrating during a branch", async () => {
