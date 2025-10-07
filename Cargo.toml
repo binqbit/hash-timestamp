@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "programs/*"
+    "programs/hash-timestamp"
 ]
 resolver = "2"
 
