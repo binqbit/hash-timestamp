@@ -17,10 +17,11 @@ export const HASH_ACCOUNT_SPACE =
   8 /*previous.created_at*/ +
   8 /*previous.generation*/ +
   32 /*hash*/ +
+  1 /*hash_type*/ +
   8 /*voters*/ +
   8 /*created_at*/ +
   1 /*bump*/ +
-  7; /*padding*/
+  6; /*padding*/
 
 export const VOTE_INFO_SPACE =
   8 /*disc*/ +
@@ -33,6 +34,12 @@ export const VOTE_INFO_SPACE =
 const GENESIS_HASH = new Uint8Array(32);
 
 export type HashBytes = Uint8Array | Buffer | number[] | string;
+
+export enum HashType {
+  Hash = 0,
+  Branch = 1,
+  Batch = 2,
+}
 
 export function to32Bytes(input: HashBytes): Uint8Array {
   let buf: Buffer;
@@ -52,7 +59,8 @@ export function to32Bytes(input: HashBytes): Uint8Array {
 export function deriveUpdatedHash(
   previousHashId: HashBytes,
   previousCreatedAt: number | anchor.BN,
-  newPayload: HashBytes
+  newPayload: HashBytes,
+  hashType: HashType = HashType.Branch
 ): Uint8Array {
   const prevHashBytes = Buffer.from(to32Bytes(previousHashId));
   const payloadBytes = Buffer.from(to32Bytes(newPayload));
@@ -67,11 +75,103 @@ export function deriveUpdatedHash(
   hasher.update(new Uint8Array(prevHashBytes));
   hasher.update(new Uint8Array(createdBuf));
   hasher.update(new Uint8Array(payloadBytes));
+  hasher.update(new Uint8Array([hashType]));
   return new Uint8Array(hasher.digest());
 }
 
 export function deriveGenesisHashId(payload: HashBytes): Uint8Array {
-  return deriveUpdatedHash(GENESIS_HASH, 0, payload);
+  return deriveUpdatedHash(GENESIS_HASH, 0, payload, HashType.Hash);
+}
+
+type NumericLike = number | bigint | anchor.BN;
+
+function toBigInt(value: NumericLike): bigint {
+  if (typeof value === "number") {
+    return BigInt(value);
+  }
+  if (typeof value === "bigint") {
+    return value;
+  }
+  return BigInt(value.toString());
+}
+
+function toI64Bytes(value: NumericLike): Uint8Array {
+  const bigintValue = toBigInt(value);
+  const buf = Buffer.alloc(8);
+  buf.writeBigInt64LE(bigintValue);
+  return new Uint8Array(buf);
+}
+
+function toU64Bytes(value: NumericLike): Uint8Array {
+  const bigintValue = toBigInt(value);
+  if (bigintValue < 0n) {
+    throw new Error("value must be non-negative");
+  }
+  const buf = Buffer.alloc(8);
+  buf.writeBigUInt64LE(bigintValue);
+  return new Uint8Array(buf);
+}
+
+function coerceNumericLike(value: any): NumericLike {
+  if (typeof value === "number" || typeof value === "bigint") {
+    return value;
+  }
+  if (value && typeof value.toString === "function") {
+    return BigInt(value.toString());
+  }
+  if (value && typeof value.toNumber === "function") {
+    return value.toNumber();
+  }
+  throw new Error("unsupported numeric value");
+}
+
+function coerceBigInt(value: any): bigint {
+  return toBigInt(coerceNumericLike(value));
+}
+
+function pickField<T = any>(object: any, ...keys: string[]): T | undefined {
+  for (const key of keys) {
+    if (object && object[key] !== undefined && object[key] !== null) {
+      return object[key];
+    }
+  }
+  return undefined;
+}
+
+export function deriveBatchPayloadHash(
+  memberCanonicalIds: HashBytes[],
+  memberCreatedAts: NumericLike[],
+  memberGenerations: NumericLike[]
+): Uint8Array {
+  if (memberCanonicalIds.length === 0) {
+    throw new Error("batch requires at least one member");
+  }
+  if (
+    memberCanonicalIds.length !== memberCreatedAts.length ||
+    memberCanonicalIds.length !== memberGenerations.length
+  ) {
+    throw new Error("member canonical ids, timestamps, and generations length mismatch");
+  }
+  const hasher = createHash("sha256");
+  for (let i = 0; i < memberCanonicalIds.length; i++) {
+    hasher.update(new Uint8Array(to32Bytes(memberCanonicalIds[i])));
+    hasher.update(new Uint8Array(toI64Bytes(memberCreatedAts[i])));
+    hasher.update(new Uint8Array(toU64Bytes(memberGenerations[i])));
+  }
+  return new Uint8Array(hasher.digest());
+}
+
+export function deriveBatchHashId(
+  memberCanonicalIds: HashBytes[],
+  memberCreatedAts: NumericLike[],
+  memberGenerations: NumericLike[]
+): Uint8Array {
+  const aggregated = deriveBatchPayloadHash(
+    memberCanonicalIds,
+    memberCreatedAts,
+    memberGenerations
+  );
+  return deriveUpdatedHash(GENESIS_HASH, 0, aggregated, HashType.Batch);
 }
 
 export function deriveHashPda(
@@ -218,7 +318,12 @@ export class HashTimestampClient {
       typeof oldAccount.createdAt === "number"
         ? oldAccount.createdAt
         : oldAccount.createdAt.toNumber();
-    const derivedBytes = deriveUpdatedHash(oldHashIdBytes, createdAt, newHashBytes);
+    const derivedBytes = deriveUpdatedHash(
+      oldHashIdBytes,
+      createdAt,
+      newHashBytes,
+      HashType.Branch
+    );
     const newHashPda = this.hashPda(derivedBytes);
     const newVotePda = this.votePda(newHashPda, walletPk);
     const oldVotePda = this.votePda(oldHashPda, walletPk);
@@ -238,6 +343,95 @@ export class HashTimestampClient {
       return builder.signers([payer]).rpc();
     }
     return builder.rpc();
+  }
+
+  async batch(
+    memberIds: HashBytes[],
+    payer?: Keypair
+  ): Promise<{ signature: TransactionSignature; batchId: Uint8Array }> {
+    if (memberIds.length === 0) {
+      throw new Error("batch requires at least one member");
+    }
+
+    const provider = this.program.provider as anchor.AnchorProvider;
+    const walletPk = payer ? payer.publicKey : provider.wallet.publicKey;
+
+    const memberIdBytes = memberIds.map((id) => to32Bytes(id));
+    const memberPdas = memberIdBytes.map((id) => this.hashPda(id));
+
+    const memberAccounts = await Promise.all(
+      memberIdBytes.map(async (id) => {
+        const account = await this.fetchHashAccount(id);
+        if (!account) {
+          throw new Error("batch member hash not found");
+        }
+        return account;
+      })
+    );
+
+    const memberCreatedAts = memberAccounts.map((account) => {
+      const created =
+        (account as any).createdAt ?? (account as any).created_at ?? null;
+      if (created === null || created === undefined) {
+        throw new Error("batch member missing created_at");
+      }
+      return coerceBigInt(created);
+    });
+
+    const memberGenerations = memberAccounts.map((account) => {
+      const prev =
+        (account as any).previous ??
+        (account as any).previousBlock ??
+        (account as any).previous_block ??
+        null;
+      if (!prev) {
+        return 0n;
+      }
+      const prevHashRaw =
+        pickField(prev, "hashId", "hash_id", "hash") ?? new Uint8Array(32);
+      const prevHash = Buffer.from(to32Bytes(prevHashRaw as HashBytes));
+      const prevCreated = coerceBigInt(
+        pickField(prev, "createdAt", "created_at") ?? 0
+      );
+      const prevGeneration = coerceBigInt(
+        pickField(prev, "generation", "gen") ?? 0
+      );
+      const isZeroHash = prevHash.every((value) => value === 0);
+      const isGenesisPrev =
+        isZeroHash && prevCreated === 0n && prevGeneration === 0n;
+      return isGenesisPrev ? 0n : prevGeneration + 1n;
+    });
+
+    const batchId = deriveBatchHashId(
+      memberIdBytes,
+      memberCreatedAts,
+      memberGenerations
+    );
+    const batchPda = this.hashPda(batchId);
+    const votePda = this.votePda(batchPda, walletPk);
+
+    const builder = this.program.methods
+      .batch()
+      .accountsStrict({
+        batchHashAccount: batchPda,
+        voteInfo: votePda,
+        payer: walletPk,
+        systemProgram: SystemProgram.programId,
+      })
+      // Anchor's remainingAccounts maintains order; preserve provided sequence.
+      .remainingAccounts(
+        memberPdas.map((pubkey) => ({
+          pubkey,
+          isSigner: false,
+          isWritable: false,
+        }))
+      );
+
+    const signature = payer
+      ? await builder.signers([payer]).rpc()
+      : await builder.rpc();
+
+    return { signature, batchId };
   }
 
   // Account helpers
