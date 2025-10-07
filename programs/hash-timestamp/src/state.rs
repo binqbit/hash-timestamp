@@ -11,10 +11,11 @@ pub const PREVIOUS_BLOCK_SIZE: usize = 32 /*hash_id*/
 pub const HASH_ACCOUNT_SPACE: usize = 8 /*disc*/
     + PREVIOUS_BLOCK_SIZE
     + 32 /*hash*/
+    + 1  /*hash_type*/
     + 8  /*voters*/
     + 8  /*created_at*/
     + 1  /*bump*/
-    + 7; /*padding*/
+    + 6; /*padding*/
 
 pub const VOTE_INFO_SPACE: usize = 8 /*disc*/
     + 32 /*voter*/
@@ -22,6 +23,20 @@ pub const VOTE_INFO_SPACE: usize = 8 /*disc*/
     + 8  /*amount*/
     + 1  /*bump*/
     + 7; /*padding*/
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum HashType {
+    Hash = 0,
+    Branch = 1,
+    Batch = 2,
+}
+
+impl Default for HashType {
+    fn default() -> Self {
+        HashType::Hash
+    }
+}
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Default, Debug)]
 pub struct PreviousBlock {
@@ -34,6 +49,7 @@ pub struct PreviousBlock {
 pub struct HashAccount {
     pub previous: PreviousBlock,
     pub hash: [u8; 32],
+    pub hash_type: HashType,
     pub voters: u64,
     pub created_at: i64,
     pub bump: u8,
@@ -49,18 +65,25 @@ pub struct VoteInfo {
 
 impl HashAccount {
     pub fn canonical_id(&self) -> [u8; 32] {
-        Self::derive_id(&self.previous.hash_id, self.previous.created_at, &self.hash)
+        Self::derive_id(
+            &self.previous.hash_id,
+            self.previous.created_at,
+            &self.hash,
+            self.hash_type,
+        )
     }
 
     pub fn derive_id(
         previous_hash_id: &[u8; 32],
         previous_created_at: i64,
         hash: &[u8; 32],
+        hash_type: HashType,
     ) -> [u8; 32] {
         hashv(&[
             previous_hash_id.as_ref(),
             &previous_created_at.to_le_bytes(),
             hash.as_ref(),
+            &[hash_type as u8],
         ])
         .to_bytes()
     }
@@ -77,10 +100,7 @@ impl HashAccount {
     }
 
     pub fn current_generation(&self) -> u64 {
-        if self.previous.hash_id == [0u8; 32]
-            && self.previous.created_at == 0
-            && self.previous.generation == 0
-        {
+        if self.hash_type == HashType::Hash || self.hash_type == HashType::Batch {
             0
         } else {
             self.previous.generation.saturating_add(1)
