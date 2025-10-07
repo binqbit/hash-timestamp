@@ -1,19 +1,15 @@
 use anchor_lang::prelude::*;
+
 use anchor_lang::solana_program::program_error::ProgramError;
 use anchor_lang::system_program::{self, Transfer};
 
-use crate::state::{HashAccount, VoteInfo, HASH_ACCOUNT_SPACE, VOTE_INFO_SPACE};
+use crate::logic::ensure_hash_initialized;
+use crate::state::{HashAccount, VoteInfo, VOTE_INFO_SPACE};
+use crate::utils::minimum_hash_rent;
 
 #[derive(Accounts)]
-#[instruction(hash: [u8; 32])]
 pub struct Vote<'info> {
-    #[account(
-        init_if_needed,
-        payer = user,
-        space = HASH_ACCOUNT_SPACE,
-        seeds = [b"hash", hash.as_ref()],
-        bump
-    )]
+    #[account(mut)]
     pub hash_account: Account<'info, HashAccount>,
 
     #[account(
@@ -21,7 +17,7 @@ pub struct Vote<'info> {
         payer = user,
         space = VOTE_INFO_SPACE,
         seeds = [b"vote", hash_account.key().as_ref(), user.key().as_ref()],
-        bump
+        bump,
     )]
     pub vote_info: Account<'info, VoteInfo>,
 
@@ -30,47 +26,34 @@ pub struct Vote<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn vote(ctx: Context<Vote>, hash: [u8; 32]) -> Result<()> {
+pub fn vote(ctx: Context<Vote>) -> Result<()> {
     let hash_account = &mut ctx.accounts.hash_account;
     let vote_info = &mut ctx.accounts.vote_info;
     let user = &ctx.accounts.user;
 
-    // If newly initialized, set defaults
-    let is_new = hash_account.created_at == 0;
-    if is_new {
-        hash_account.hash = hash;
-        hash_account.voters = 0;
-        hash_account.created_at = Clock::get()?.unix_timestamp;
-        hash_account.bump = ctx.bumps.hash_account;
-    }
+    let hash_snapshot = ensure_hash_initialized(hash_account, ctx.program_id)?;
 
-    // Record vote info (init guarantees it did not exist)
-    vote_info.voter = user.key();
-    vote_info.hash = hash;
-    // each vote contributes exactly the rent-exempt minimum for the HashAccount
     let rent = Rent::get()?;
-    let rent_min = rent.minimum_balance(HASH_ACCOUNT_SPACE);
-    vote_info.amount = rent_min as u64;
-    vote_info.bump = ctx.bumps.vote_info;
+    let hash_rent = minimum_hash_rent(&rent);
 
-    // Transfer user's deposit into the hash account only if not just created.
-    // When the account is created in this ix, Anchor already funded it with rent_min from `user`.
-    if !is_new {
-        let cpi_ctx = CpiContext::new(
-            ctx.accounts.system_program.to_account_info(),
-            Transfer {
-                from: user.to_account_info(),
-                to: hash_account.to_account_info(),
-            },
-        );
-        system_program::transfer(cpi_ctx, rent_min)?;
-    }
+    let transfer_ctx = CpiContext::new(
+        ctx.accounts.system_program.to_account_info(),
+        Transfer {
+            from: user.to_account_info(),
+            to: hash_account.to_account_info(),
+        },
+    );
+    system_program::transfer(transfer_ctx, hash_rent)?;
 
-    // Increment voters
     hash_account.voters = hash_account
         .voters
         .checked_add(1)
         .ok_or(ProgramError::InvalidInstructionData)?;
+
+    vote_info.voter = user.key();
+    vote_info.hash_id = *hash_snapshot.canonical_id();
+    vote_info.amount = hash_rent;
+    vote_info.bump = ctx.bumps.vote_info;
 
     Ok(())
 }
