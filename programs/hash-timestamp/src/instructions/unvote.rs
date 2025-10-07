@@ -4,7 +4,7 @@ use anchor_lang::solana_program::program_error::ProgramError;
 
 use crate::logic::ensure_hash_initialized;
 use crate::state::{HashAccount, VoteInfo};
-use crate::utils::move_lamports;
+use crate::utils::{close_account, move_lamports};
 use crate::ErrorCode;
 
 #[derive(Accounts)]
@@ -55,11 +55,7 @@ pub fn unvote(ctx: Context<Unvote>) -> Result<()> {
         let user_info = user.to_account_info();
         let remaining = hash_info.lamports();
         move_lamports(&hash_info, &user_info, remaining)?;
-
-        let mut data = hash_info.try_borrow_mut_data()?;
-        for byte in data.iter_mut() {
-            *byte = 0;
-        }
+        close_account(&hash_info, &user_info)?;
     }
 
     Ok(())

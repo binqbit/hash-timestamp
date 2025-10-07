@@ -135,7 +135,7 @@ pub fn branch(ctx: Context<Branch>, new_hash: [u8; 32], take_vote: bool) -> Resu
     let vote_state = new_vote_state(
         user_key,
         *new_hash_meta.canonical_id(),
-        hash_rent,
+        if take_vote { migrate_amount } else { hash_rent },
         new_vote_meta.bump,
     );
     write_account(new_vote_info, &vote_state)?;

@@ -171,7 +171,17 @@ describe("hash-timestamp", () => {
     await client.register(payload);
     await client.unvote(hashId);
 
-    const account = await client.fetchHashAccount(hashId);
+    let account = await client.fetchHashAccount(hashId);
+    expect(account).to.eq(null);
+    expect(await hashLamports(hashId)).to.eq(0);
+
+    await client.register(payload);
+    account = await client.fetchHashAccount(hashId);
+    expect(account).to.not.equal(null);
+    expect(toNum(account!.voters)).to.eq(1);
+
+    await client.unvote(hashId);
+    account = await client.fetchHashAccount(hashId);
     expect(account).to.eq(null);
     expect(await hashLamports(hashId)).to.eq(0);
   });
@@ -303,6 +313,10 @@ describe("hash-timestamp", () => {
     const oldAccount = await client.fetchHashAccount(hashId);
     expect(oldAccount).to.not.equal(null);
     const createdAt = toNum(oldAccount!.createdAt);
+    const oldVote = await client.fetchVoteInfo(hashId, provider.wallet.publicKey);
+    expect(oldVote).to.not.equal(null);
+    const oldVoteAmount = toNum(oldVote!.amount);
+    const oldVoteLamports = await voteLamports(hashId, provider.wallet.publicKey);
 
     const newPayload = randomHash();
     const derivedId = deriveUpdatedHash(hashId, createdAt, newPayload);
@@ -331,9 +345,9 @@ describe("hash-timestamp", () => {
       provider.wallet.publicKey
     );
     expect(voteInfo).to.not.equal(null);
-    expect(toNum(voteInfo!.amount)).to.eq(rentMin);
+    expect(toNum(voteInfo!.amount)).to.eq(oldVoteAmount);
     expect(await voteLamports(derivedId, provider.wallet.publicKey)).to.eq(
-      voteRentMin
+      oldVoteLamports
     );
 
     await client.unvote(derivedId);
