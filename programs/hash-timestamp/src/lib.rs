@@ -3,7 +3,9 @@ use anchor_lang::prelude::*;
 declare_id!("HTSx1VNWNBDGtfwr2nU8gSzhxfFtUxd2nkdFq7SCSZzY");
 
 pub mod instructions;
+pub mod logic;
 pub mod state;
+pub mod utils;
 
 use instructions::*;
 
@@ -11,20 +13,30 @@ use instructions::*;
 pub mod hash_timestamp {
     use super::*;
 
+    // Register a new hash account (genesis or standalone hash).
+    pub fn register(ctx: Context<Register>, hash: [u8; 32]) -> Result<()> {
+        handlers::register(ctx, hash)
+    }
+
+    // Derive a new hash from an existing one and optionally migrate the caller's vote.
+    pub fn branch(ctx: Context<Branch>, new_hash: [u8; 32], take_vote: bool) -> Result<()> {
+        handlers::branch(ctx, new_hash, take_vote)
+    }
+
     // Vote for a hash; create the hash account if missing;
     // deposit exactly the rent-exempt minimum for this account size.
-    pub fn vote(ctx: Context<Vote>, hash: [u8; 32]) -> Result<()> {
-        handlers::vote(ctx, hash)
+    pub fn vote(ctx: Context<Vote>) -> Result<()> {
+        handlers::vote(ctx)
     }
 
     // Remove caller's vote and withdraw their deposit; auto-close if zero voters remain.
-    pub fn unvote(ctx: Context<Unvote>, hash: [u8; 32]) -> Result<()> {
-        handlers::unvote(ctx, hash)
+    pub fn unvote(ctx: Context<Unvote>) -> Result<()> {
+        handlers::unvote(ctx)
     }
 
     // Verify that the hash account exists (no-op if OK).
-    pub fn verify(ctx: Context<Verify>, hash: [u8; 32]) -> Result<()> {
-        handlers::verify(ctx, hash)
+    pub fn verify(ctx: Context<Verify>) -> Result<()> {
+        handlers::verify(ctx)
     }
 }
 
@@ -40,4 +52,14 @@ pub enum ErrorCode {
     NotVoter,
     #[msg("Votes are not zero")]
     VotesNotZero,
+    #[msg("Derived hash mismatch")]
+    DerivedHashMismatch,
+    #[msg("Expected vote account for migration")]
+    VoteAccountMissing,
+    #[msg("Vote migration requested but no vote exists")]
+    NoVoteToMigrate,
+    #[msg("Hash generation overflowed")]
+    GenerationOverflow,
+    #[msg("Hash already exists")]
+    HashAlreadyExists,
 }
