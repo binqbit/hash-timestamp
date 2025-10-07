@@ -46,3 +46,53 @@ pub struct VoteInfo {
     pub amount: u64,
     pub bump: u8,
 }
+
+impl HashAccount {
+    pub fn canonical_id(&self) -> [u8; 32] {
+        Self::derive_id(&self.previous.hash_id, self.previous.created_at, &self.hash)
+    }
+
+    pub fn derive_id(
+        previous_hash_id: &[u8; 32],
+        previous_created_at: i64,
+        hash: &[u8; 32],
+    ) -> [u8; 32] {
+        hashv(&[
+            previous_hash_id.as_ref(),
+            &previous_created_at.to_le_bytes(),
+            hash.as_ref(),
+        ])
+        .to_bytes()
+    }
+
+    pub fn derive_pda(program_id: &Pubkey, hash_id: &[u8; 32]) -> (Pubkey, u8) {
+        Pubkey::find_program_address(&[b"hash", hash_id.as_ref()], program_id)
+    }
+
+    pub fn verify_account(&self, program_id: &Pubkey, account: &AccountInfo) -> Result<()> {
+        let (expected, bump) = Self::derive_pda(program_id, &self.canonical_id());
+        require_keys_eq!(account.key(), expected, ErrorCode::InvalidHashSeeds);
+        require_eq!(self.bump, bump, ErrorCode::InvalidHashSeeds);
+        Ok(())
+    }
+
+    pub fn current_generation(&self) -> u64 {
+        if self.previous.hash_id == [0u8; 32]
+            && self.previous.created_at == 0
+            && self.previous.generation == 0
+        {
+            0
+        } else {
+            self.previous.generation.saturating_add(1)
+        }
+    }
+}
+
+impl VoteInfo {
+    pub fn derive_pda(program_id: &Pubkey, hash_account: &Pubkey, voter: &Pubkey) -> (Pubkey, u8) {
+        Pubkey::find_program_address(
+            &[b"vote", hash_account.as_ref(), voter.as_ref()],
+            program_id,
+        )
+    }
+}
