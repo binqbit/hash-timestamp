@@ -16,6 +16,8 @@ import { HashTimestamp } from "../target/types/hash_timestamp";
 import {
   HashTimestampClient,
   HashType,
+  deriveAccountHashId,
+  deriveAccountMetadataHash,
   deriveBatchHashId,
   deriveBatchPayloadHash,
   deriveGenesisHashId,
@@ -71,6 +73,8 @@ export const toHashType = (value: any): HashType => {
     switch (key.toLowerCase()) {
       case "hash":
         return HashType.Hash;
+      case "account":
+        return HashType.Account;
       case "branch":
         return HashType.Branch;
       case "batch":
@@ -144,6 +148,8 @@ export {
   PublicKey,
   HashType,
   HashTimestampClient,
+  deriveAccountHashId,
+  deriveAccountMetadataHash,
   deriveBatchHashId,
   deriveBatchPayloadHash,
   deriveGenesisHashId,
