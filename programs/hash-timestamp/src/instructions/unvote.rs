@@ -1,10 +1,7 @@
 use anchor_lang::prelude::*;
 
-use anchor_lang::solana_program::program_error::ProgramError;
-
-use crate::logic::ensure_hash_initialized;
+use crate::logic::{ensure_hash_initialized, release_vote_from_hash};
 use crate::state::{HashAccount, VoteInfo};
-use crate::utils::{close_account, move_lamports};
 use crate::ErrorCode;
 
 #[derive(Accounts)]
@@ -14,8 +11,7 @@ pub struct Unvote<'info> {
 
     #[account(
         mut,
-        close = user,
-        seeds = [b"vote", hash_account.key().as_ref(), user.key().as_ref()],
+        seeds = [b"vote", user.key().as_ref(), hash_account.canonical_id().as_ref()],
         bump = vote_info.bump,
     )]
     pub vote_info: Account<'info, VoteInfo>,
@@ -39,24 +35,9 @@ pub fn unvote(ctx: Context<Unvote>) -> Result<()> {
     require_keys_eq!(vote_info.voter, user.key(), ErrorCode::NotVoter);
 
     let amount = vote_info.amount;
-    if amount > 0 {
-        let hash_info = hash_account.to_account_info();
-        let user_info = user.to_account_info();
-        move_lamports(&hash_info, &user_info, amount)?;
-    }
-
-    hash_account.voters = hash_account
-        .voters
-        .checked_sub(1)
-        .ok_or(ProgramError::InvalidInstructionData)?;
-
-    if hash_account.voters == 0 {
-        let hash_info = hash_account.to_account_info();
-        let user_info = user.to_account_info();
-        let remaining = hash_info.lamports();
-        move_lamports(&hash_info, &user_info, remaining)?;
-        close_account(&hash_info, &user_info)?;
-    }
+    let user_info = user.to_account_info();
+    let vote_account_info = vote_info.to_account_info();
+    release_vote_from_hash(hash_account, &vote_account_info, &user_info, amount)?;
 
     Ok(())
 }

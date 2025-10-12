@@ -1,17 +1,15 @@
 use anchor_lang::prelude::*;
 
-use crate::logic::{
-    compose_batch, create_hash_and_vote, AccountFingerprint, BatchComposition, BatchMember,
-};
-use crate::state::HashAccount;
+use crate::logic::{compose_pack, create_hash_and_vote, AccountFingerprint};
+use crate::state::{HashAccount, HashSource};
 use crate::utils::read_account;
 use crate::ErrorCode;
 
 #[derive(Accounts)]
-pub struct Batch<'info> {
+pub struct Pack<'info> {
     /// CHECK: Created and initialized within this instruction.
     #[account(mut)]
-    pub batch_hash_account: AccountInfo<'info>,
+    pub pack_hash_account: AccountInfo<'info>,
 
     /// CHECK: Created and initialized within this instruction.
     #[account(mut)]
@@ -23,8 +21,8 @@ pub struct Batch<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn batch(ctx: Context<Batch>) -> Result<()> {
-    let batch_account = &ctx.accounts.batch_hash_account;
+pub fn pack(ctx: Context<Pack>) -> Result<()> {
+    let pack_account = &ctx.accounts.pack_hash_account;
     let vote_account = &ctx.accounts.vote_info;
     let payer = &ctx.accounts.payer;
     let payer_account = payer.to_account_info();
@@ -32,35 +30,37 @@ pub fn batch(ctx: Context<Batch>) -> Result<()> {
     let system_program = ctx.accounts.system_program.to_account_info();
     let program_id = ctx.program_id;
 
-    let mut members: Vec<BatchMember> = Vec::with_capacity(ctx.remaining_accounts.len());
+    require!(
+        !ctx.remaining_accounts.is_empty(),
+        ErrorCode::PackMembersEmpty
+    );
+
+    let mut members: Vec<AccountFingerprint> = Vec::with_capacity(ctx.remaining_accounts.len());
 
     for account_info in ctx.remaining_accounts.iter() {
         require!(
             *account_info.owner == *program_id,
-            ErrorCode::BatchMemberWrongProgram
+            ErrorCode::PackMemberWrongProgram
         );
 
         let hash_account: HashAccount = read_account(account_info)?;
         hash_account.verify_account(program_id, account_info)?;
         require!(hash_account.created_at != 0, ErrorCode::HashNotFound);
 
-        members.push(BatchMember {
-            canonical_id: hash_account.canonical_id(),
-            fingerprint: AccountFingerprint::from_account(&hash_account),
-        });
+        members.push(AccountFingerprint::from_account(&hash_account));
     }
 
-    let composition = compose_batch(&members)?;
-    let BatchComposition { source, hash } = composition;
+    let pack_hash = compose_pack(&members)?;
+    let source = HashSource::pack();
 
     create_hash_and_vote(
         program_id,
         &payer_account,
         &system_program,
-        batch_account,
+        pack_account,
         vote_account,
         source,
-        hash,
+        pack_hash,
         &payer_key,
     )?;
 

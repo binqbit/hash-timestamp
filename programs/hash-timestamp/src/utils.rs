@@ -7,50 +7,18 @@ use anchor_lang::solana_program::{
 use anchor_lang::system_program;
 use anchor_lang::{AccountDeserialize, AccountSerialize};
 
-use crate::state::{HASH_ACCOUNT_SPACE, VOTE_INFO_SPACE};
-
-#[derive(Clone, Debug)]
-pub struct SeedBundle {
-    parts: Vec<Vec<u8>>,
-}
-
-impl SeedBundle {
-    pub fn new(parts: Vec<Vec<u8>>) -> Self {
-        Self { parts }
-    }
-
-    pub fn with_signer<F>(&self, f: F) -> Result<()>
-    where
-        F: FnOnce(&[&[&[u8]]]) -> std::result::Result<(), ProgramError>,
-    {
-        let seed_refs: Vec<&[u8]> = self.parts.iter().map(|p| p.as_slice()).collect();
-        let signer = [seed_refs.as_slice()];
-        f(&signer).map_err(Into::into)
-    }
-}
-
-pub fn hash_seed_bundle(canonical_id: &[u8; 32], bump: u8) -> SeedBundle {
-    SeedBundle::new(vec![b"hash".to_vec(), canonical_id.to_vec(), vec![bump]])
-}
-
-pub fn vote_seed_bundle(hash_key: &Pubkey, voter: &Pubkey, bump: u8) -> SeedBundle {
-    SeedBundle::new(vec![
-        b"vote".to_vec(),
-        hash_key.to_bytes().to_vec(),
-        voter.to_bytes().to_vec(),
-        vec![bump],
-    ])
-}
+use crate::logic::seeds::SeedBundle;
 
 pub fn create_account_with_seeds<'info>(
     payer: &AccountInfo<'info>,
     new_account: &AccountInfo<'info>,
-    lamports: u64,
     space: usize,
     owner: &Pubkey,
     seeds: &SeedBundle,
     system_program_info: &AccountInfo<'info>,
-) -> Result<()> {
+) -> Result<u64> {
+    let rent = Rent::get()?;
+    let lamports = rent.minimum_balance(space);
     let ix = system_instruction::create_account(
         &payer.key(),
         &new_account.key(),
@@ -71,7 +39,9 @@ pub fn create_account_with_seeds<'info>(
                 signer,
             )
         })
-        .map_err(Into::into)
+        .map_err(|e| anchor_lang::error::Error::from(e))?;
+
+    Ok(lamports)
 }
 
 pub fn allocate_pda_account<'info>(
@@ -101,14 +71,6 @@ pub fn allocate_pda_account<'info>(
             )
         })
         .map_err(Into::into)
-}
-
-pub fn minimum_hash_rent(rent: &Rent) -> u64 {
-    rent.minimum_balance(HASH_ACCOUNT_SPACE)
-}
-
-pub fn minimum_vote_rent(rent: &Rent) -> u64 {
-    rent.minimum_balance(VOTE_INFO_SPACE)
 }
 
 pub fn read_account<T: AccountDeserialize>(account: &AccountInfo) -> Result<T> {

@@ -7,6 +7,7 @@ pub mod logic;
 pub mod state;
 pub mod utils;
 
+use instructions::handlers;
 use instructions::*;
 
 #[program]
@@ -19,13 +20,18 @@ pub mod hash_timestamp {
     }
 
     // Produce a hash account from an arbitrary account's metadata.
-    pub fn account_hash(ctx: Context<AccountHash>) -> Result<()> {
+    pub fn account(ctx: Context<AccountHash>) -> Result<()> {
         handlers::account_hash(ctx)
     }
 
+    // Pack existing hash accounts into a minimal composite hash.
+    pub fn pack(ctx: Context<Pack>) -> Result<()> {
+        handlers::pack(ctx)
+    }
+
     // Derive a new hash from an existing one and optionally migrate the caller's vote.
-    pub fn branch(ctx: Context<Branch>, new_hash: [u8; 32], take_vote: bool) -> Result<()> {
-        handlers::branch(ctx, new_hash, take_vote)
+    pub fn branch(ctx: Context<Branch>, payload: [u8; 32], take_vote: bool) -> Result<()> {
+        handlers::branch(ctx, payload, take_vote)
     }
 
     // Create a batch hash that aggregates several existing hashes.
@@ -76,4 +82,8 @@ pub enum ErrorCode {
     BatchMembersEmpty,
     #[msg("Batch member account not owned by the program")]
     BatchMemberWrongProgram,
+    #[msg("Pack requires at least one member")]
+    PackMembersEmpty,
+    #[msg("Pack member account not owned by the program")]
+    PackMemberWrongProgram,
 }
