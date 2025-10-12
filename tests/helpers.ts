@@ -1,30 +1,34 @@
-import { deserialize, serialize } from "v8";
-
-if (typeof (globalThis as any).structuredClone !== "function") {
-  (globalThis as any).structuredClone = (value: unknown) =>
-    deserialize(serialize(value));
-}
-
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
-import {
-  Keypair,
-  LAMPORTS_PER_SOL,
-  PublicKey,
-} from "@solana/web3.js";
+import { Keypair, LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
 import { HashTimestamp } from "../target/types/hash_timestamp";
+
 import {
+  HashSource,
+  HashSourceKind,
   HashTimestampClient,
-  HashType,
+  canonicalHashId,
+  decodeHashSource,
   deriveAccountHashId,
   deriveAccountMetadataHash,
+  deriveBatchHash,
   deriveBatchHashId,
-  deriveBatchPayloadHash,
+  deriveBranchHash,
+  deriveBranchHashId,
   deriveGenesisHashId,
-  deriveUpdatedHash,
+  derivePackHash,
+  derivePackHashId,
+  generationFromSource,
+  hashAccountSpace,
+  hashSourceKindOf,
   rentExemptForHash,
   rentExemptForVote,
 } from "../app/sdk/hashTimestamp";
+
+if (typeof (globalThis as any).structuredClone !== "function") {
+  (globalThis as any).structuredClone = (value: unknown) =>
+    value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
 
 export const provider = anchor.AnchorProvider.env();
 anchor.setProvider(provider);
@@ -47,60 +51,17 @@ export const toNum = (value: any): number => {
   throw new TypeError("Unable to coerce value to number");
 };
 
-export const toHashType = (value: any): HashType => {
-  if (value == null) {
-    throw new TypeError("hash type is nullish");
-  }
+export const hashSourceOf = (account: any): HashSource =>
+  decodeHashSource((account as any).source ?? {});
 
-  if (typeof value === "number") {
-    return value as HashType;
-  }
+export const sourceKindOf = (account: any): HashSourceKind =>
+  hashSourceKindOf(hashSourceOf(account));
 
-  if (typeof value === "bigint") {
-    return Number(value) as HashType;
-  }
+export const generationOf = (account: any): number =>
+  Number(generationFromSource(hashSourceOf(account)));
 
-  if (typeof value.toNumber === "function") {
-    return value.toNumber() as HashType;
-  }
-
-  if (Array.isArray(value) && value.length > 0) {
-    return toHashType(value[0]);
-  }
-
-  const keys = Object.keys(value);
-  for (const key of keys) {
-    switch (key.toLowerCase()) {
-      case "hash":
-        return HashType.Hash;
-      case "account":
-        return HashType.Account;
-      case "branch":
-        return HashType.Branch;
-      case "batch":
-        return HashType.Batch;
-    }
-  }
-
-  throw new TypeError(
-    `Unknown hash type representation: ${JSON.stringify(value)}`
-  );
-};
-
-export const generationOf = (account: any): number => {
-  const prev = account.previous;
-  const prevHashBuffer = Buffer.from(
-    prev.hashId ?? prev.hash_id ?? prev.hash
-  );
-  const isGenesisPrev =
-    Buffer.compare(
-      new Uint8Array(prevHashBuffer),
-      new Uint8Array(zeroHash)
-    ) === 0 &&
-    toNum(prev.createdAt) === 0 &&
-    toNum(prev.generation) === 0;
-  return isGenesisPrev ? 0 : toNum(prev.generation) + 1;
-};
+export const hashSpaceOf = (account: any): number =>
+  hashAccountSpace(hashSourceOf(account));
 
 export const airdrop = async (
   pubkey: PublicKey,
@@ -123,9 +84,8 @@ export const voteLamports = async (
   hashId: Buffer | Uint8Array,
   voter: PublicKey
 ): Promise<number> => {
-  const hashPda = client.hashPda(hashId);
   const info = await provider.connection.getAccountInfo(
-    client.votePda(hashPda, voter)
+    client.votePda(hashId, voter)
   );
   return info?.lamports ?? 0;
 };
@@ -142,16 +102,46 @@ export const getRentMinimums = async () => {
   return cachedRent;
 };
 
+export const rentForSource = async (source: HashSource) =>
+  rentExemptForHash(provider.connection, source);
+
+export const errorCodeOf = (err: any): number | null => {
+  const direct = err?.error?.errorCode?.number;
+  if (typeof direct === "number") {
+    return direct;
+  }
+  const logs: unknown = err?.logs ?? err?.error?.logs;
+  if (Array.isArray(logs)) {
+    for (const entry of logs) {
+      if (typeof entry === "string") {
+        const match = entry.match(/custom program error: 0x([0-9a-f]+)/i);
+        if (match) {
+          return parseInt(match[1], 16);
+        }
+      }
+    }
+  }
+  return null;
+};
+
 export {
   Keypair,
   LAMPORTS_PER_SOL,
   PublicKey,
-  HashType,
+  HashSourceKind,
   HashTimestampClient,
+  canonicalHashId,
   deriveAccountHashId,
   deriveAccountMetadataHash,
+  deriveBatchHash,
   deriveBatchHashId,
-  deriveBatchPayloadHash,
+  deriveBranchHash,
+  deriveBranchHashId,
+  derivePackHash,
+  derivePackHashId,
   deriveGenesisHashId,
-  deriveUpdatedHash,
+  hashAccountSpace,
 };
+
+
+

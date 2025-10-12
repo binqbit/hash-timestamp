@@ -2,17 +2,20 @@ import { expect } from "chai";
 import {
   airdrop,
   client,
+  deriveBranchHash,
+  deriveBranchHashId,
   deriveGenesisHashId,
-  deriveUpdatedHash,
   generationOf,
   getRentMinimums,
   hashLamports,
-  HashType,
+  HashSourceKind,
+  hashSourceOf,
   Keypair,
   LAMPORTS_PER_SOL,
   provider,
+  rentForSource,
   randomHash,
-  toHashType,
+  sourceKindOf,
   toNum,
   voteLamports,
 } from "./helpers";
@@ -43,12 +46,15 @@ describe("branch instruction", () => {
     const generation = generationOf(before!);
 
     const newPayload = randomHash();
-    const derivedId = deriveUpdatedHash(
+    const parentKind = sourceKindOf(before!);
+    const branchHash = deriveBranchHash(
       hashId,
       createdAt,
-      newPayload,
-      HashType.Branch
+      generation,
+      parentKind,
+      newPayload
     );
+    const derivedId = deriveBranchHashId(branchHash);
 
     await client.branch(hashId, newPayload, true);
 
@@ -60,27 +66,29 @@ describe("branch instruction", () => {
 
     const newAccount = await client.fetchHashAccount(derivedId);
     expect(newAccount).to.not.equal(null);
-    expect(Buffer.from(newAccount!.previous.hashId)).to.deep.equal(
+    const newSource = hashSourceOf(newAccount!);
+    expect(newSource.kind).to.eq("branch");
+    const expectedRent = await rentForSource(newSource);
+    expect(Buffer.from(newSource.previousHashId)).to.deep.equal(
       Buffer.from(hashId)
     );
-    expect(toNum(newAccount!.previous.createdAt)).to.eq(createdAt);
-    expect(toNum(newAccount!.previous.generation)).to.eq(generation);
+    expect(Buffer.from(newSource.payload)).to.deep.equal(newPayload);
+    expect(Number(newSource.generation)).to.eq(generation + 1);
+    expect(Buffer.from(newAccount!.hash)).to.deep.equal(branchHash);
     expect(generationOf(newAccount!)).to.eq(generation + 1);
     expect(toNum(newAccount!.voters)).to.eq(1);
-    expect(await hashLamports(derivedId)).to.eq(rentMin);
+    expect(sourceKindOf(newAccount!)).to.eq(HashSourceKind.Branch);
+    expect(await hashLamports(derivedId)).to.eq(expectedRent);
     expect(await voteLamports(derivedId, provider.wallet.publicKey)).to.eq(
       voteRentMin
     );
-    const newHashType =
-      (newAccount as any).hashType ?? (newAccount as any).hash_type;
-    expect(toHashType(newHashType)).to.eq(HashType.Branch);
 
     const migratedVote = await client.fetchVoteInfo(
       derivedId,
       provider.wallet.publicKey
     );
     expect(migratedVote).to.not.equal(null);
-    expect(toNum(migratedVote!.amount)).to.eq(rentMin);
+    expect(toNum(migratedVote!.amount)).to.eq(expectedRent);
 
     await client.unvote(derivedId);
     await client.unvote(hashId, second);
@@ -126,19 +134,21 @@ describe("branch instruction", () => {
       provider.wallet.publicKey
     );
     expect(oldVote).to.not.equal(null);
-    const oldVoteAmount = toNum(oldVote!.amount);
     const oldVoteLamports = await voteLamports(
       hashId,
       provider.wallet.publicKey
     );
 
     const newPayload = randomHash();
-    const derivedId = deriveUpdatedHash(
+    const parentKind = sourceKindOf(oldAccount!);
+    const branchHash = deriveBranchHash(
       hashId,
       createdAt,
-      newPayload,
-      HashType.Branch
+      generationOf(oldAccount!),
+      parentKind,
+      newPayload
     );
+    const derivedId = deriveBranchHashId(branchHash);
 
     await client.branch(hashId, newPayload, true);
 
@@ -148,20 +158,19 @@ describe("branch instruction", () => {
 
     const newAccount = await client.fetchHashAccount(derivedId);
     expect(newAccount).to.not.equal(null);
-    expect(Buffer.from(newAccount!.previous.hashId)).to.deep.equal(
+    const newSource = hashSourceOf(newAccount!);
+    expect(newSource.kind).to.eq("branch");
+    const expectedRent = await rentForSource(newSource);
+    expect(Buffer.from(newSource.previousHashId)).to.deep.equal(
       Buffer.from(hashId)
     );
-    expect(toNum(newAccount!.previous.createdAt)).to.eq(createdAt);
-    expect(toNum(newAccount!.previous.generation)).to.eq(
-      generationOf(oldAccount!)
-    );
-    expect(Buffer.from(newAccount!.hash)).to.deep.equal(newPayload);
+    expect(Buffer.from(newSource.payload)).to.deep.equal(newPayload);
+    expect(Number(newSource.generation)).to.eq(generationOf(oldAccount!) + 1);
+    expect(Buffer.from(newAccount!.hash)).to.deep.equal(branchHash);
     expect(generationOf(newAccount!)).to.eq(generationOf(oldAccount!) + 1);
     expect(toNum(newAccount!.voters)).to.eq(1);
-    const newHashType =
-      (newAccount as any).hashType ?? (newAccount as any).hash_type;
-    expect(toHashType(newHashType)).to.eq(HashType.Branch);
-    expect(await hashLamports(derivedId)).to.eq(rentMin);
+    expect(sourceKindOf(newAccount!)).to.eq(HashSourceKind.Branch);
+    expect(await hashLamports(derivedId)).to.eq(expectedRent);
     expect(await voteLamports(derivedId, provider.wallet.publicKey)).to.eq(
       oldVoteLamports
     );
@@ -171,7 +180,7 @@ describe("branch instruction", () => {
       provider.wallet.publicKey
     );
     expect(voteInfo).to.not.equal(null);
-    expect(toNum(voteInfo!.amount)).to.eq(oldVoteAmount);
+    expect(toNum(voteInfo!.amount)).to.eq(expectedRent);
 
     await client.unvote(derivedId);
   });
@@ -186,20 +195,21 @@ describe("branch instruction", () => {
     const createdAt = toNum(baseAccount!.createdAt);
 
     const newPayload = randomHash();
-    const derivedId = deriveUpdatedHash(
+    const parentKind = sourceKindOf(baseAccount!);
+    const branchHash = deriveBranchHash(
       baseId,
       createdAt,
-      newPayload,
-      HashType.Branch
+      generationOf(baseAccount!),
+      parentKind,
+      newPayload
     );
+    const derivedId = deriveBranchHashId(branchHash);
 
     await client.branch(baseId, newPayload, false);
 
     const baseAfter = await client.fetchHashAccount(baseId);
     expect(baseAfter).to.not.equal(null);
-    const baseType =
-      (baseAfter as any).hashType ?? (baseAfter as any).hash_type;
-    expect(toHashType(baseType)).to.eq(HashType.Hash);
+    expect(sourceKindOf(baseAfter!)).to.eq(HashSourceKind.Hash);
     expect(toNum(baseAfter!.voters)).to.eq(1);
     expect(await voteLamports(baseId, provider.wallet.publicKey)).to.eq(
       voteRentMin
@@ -207,18 +217,21 @@ describe("branch instruction", () => {
 
     const newAccount = await client.fetchHashAccount(derivedId);
     expect(newAccount).to.not.equal(null);
-    expect(Buffer.from(newAccount!.previous.hashId)).to.deep.equal(
+    const branchSource = hashSourceOf(newAccount!);
+    expect(branchSource.kind).to.eq("branch");
+    const expectedRent = await rentForSource(branchSource);
+    expect(Buffer.from(branchSource.previousHashId)).to.deep.equal(
       Buffer.from(baseId)
     );
-    expect(toNum(newAccount!.previous.createdAt)).to.eq(createdAt);
-    expect(toNum(newAccount!.previous.generation)).to.eq(
-      generationOf(baseAccount!)
+    expect(Buffer.from(branchSource.payload)).to.deep.equal(newPayload);
+    expect(Number(branchSource.generation)).to.eq(
+      generationOf(baseAccount!) + 1
     );
+    expect(Buffer.from(newAccount!.hash)).to.deep.equal(branchHash);
     expect(generationOf(newAccount!)).to.eq(generationOf(baseAfter!) + 1);
     expect(toNum(newAccount!.voters)).to.eq(1);
-    const branchType =
-      (newAccount as any).hashType ?? (newAccount as any).hash_type;
-    expect(toHashType(branchType)).to.eq(HashType.Branch);
+    expect(sourceKindOf(newAccount!)).to.eq(HashSourceKind.Branch);
+    expect(await hashLamports(derivedId)).to.eq(expectedRent);
     expect(await voteLamports(derivedId, provider.wallet.publicKey)).to.eq(
       voteRentMin
     );

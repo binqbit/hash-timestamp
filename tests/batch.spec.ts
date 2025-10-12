@@ -1,20 +1,25 @@
 import { expect } from "chai";
 import {
   client,
+  deriveBatchHash,
   deriveBatchHashId,
-  deriveBatchPayloadHash,
   deriveGenesisHashId,
+  errorCodeOf,
   generationOf,
   getRentMinimums,
   hashLamports,
-  HashType,
+  HashSourceKind,
+  hashSourceOf,
+  Keypair,
   provider,
+  rentForSource,
   randomHash,
-  toHashType,
+  sourceKindOf,
   toNum,
   voteLamports,
-  zeroHash,
 } from "./helpers";
+import { SystemProgram } from "@solana/web3.js";
+import * as anchor from "@coral-xyz/anchor";
 
 describe("batch instruction", () => {
   let rentMin: number;
@@ -22,6 +27,86 @@ describe("batch instruction", () => {
 
   before(async () => {
     ({ hash: rentMin, vote: voteRentMin } = await getRentMinimums());
+  });
+
+  it("requires at least one member account", async () => {
+    const fakeId = Buffer.alloc(32, 7);
+    const batchPda = client.hashPda(fakeId);
+    const votePda = client.votePda(fakeId, provider.wallet.publicKey);
+
+    try {
+      await client.program.methods
+        .batch()
+        .accountsStrict({
+          batchHashAccount: batchPda,
+          voteInfo: votePda,
+          payer: provider.wallet.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .remainingAccounts([])
+        .rpc();
+      expect.fail("batch should fail with no members");
+    } catch (err: any) {
+      expect(errorCodeOf(err)).to.eq(6010);
+    }
+  });
+
+  it("rejects member accounts not owned by the program", async () => {
+    const outsider = Keypair.generate();
+    const rent =
+      await provider.connection.getMinimumBalanceForRentExemption(0);
+    const createTx = new anchor.web3.Transaction().add(
+      SystemProgram.createAccount({
+        fromPubkey: provider.wallet.publicKey,
+        newAccountPubkey: outsider.publicKey,
+        space: 0,
+        lamports: rent,
+        programId: SystemProgram.programId,
+      })
+    );
+    await provider.sendAndConfirm(createTx, [outsider]);
+
+    const fakeId = Buffer.alloc(32, 11);
+    const batchPda = client.hashPda(fakeId);
+    const votePda = client.votePda(fakeId, provider.wallet.publicKey);
+
+    try {
+      await client.program.methods
+        .batch()
+        .accountsStrict({
+          batchHashAccount: batchPda,
+          voteInfo: votePda,
+          payer: provider.wallet.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .remainingAccounts([
+          { pubkey: outsider.publicKey, isSigner: false, isWritable: false },
+        ])
+        .rpc();
+      expect.fail("batch should fail when members are not program owned");
+    } catch (err: any) {
+      expect(errorCodeOf(err)).to.eq(6011);
+    }
+  });
+
+  it("produces different batch hashes when member order differs", async () => {
+    const payloadA = randomHash();
+    const payloadB = randomHash();
+    const hashIdA = deriveGenesisHashId(payloadA);
+    const hashIdB = deriveGenesisHashId(payloadB);
+
+    await client.register(payloadA);
+    await client.register(payloadB);
+
+    const { batchId: firstId } = await client.batch([hashIdA, hashIdB]);
+    const { batchId: secondId } = await client.batch([hashIdB, hashIdA]);
+
+    expect(Buffer.from(firstId)).to.not.deep.equal(Buffer.from(secondId));
+
+    await client.unvote(firstId);
+    await client.unvote(secondId);
+    await client.unvote(hashIdA);
+    await client.unvote(hashIdB);
   });
 
   it("creates a batch hash aggregating multiple accounts", async () => {
@@ -39,51 +124,55 @@ describe("batch instruction", () => {
     expect(accountB).to.not.equal(null);
 
     const memberCreatedAts = [
-      toNum(accountA!.createdAt ?? (accountA as any).created_at),
-      toNum(accountB!.createdAt ?? (accountB as any).created_at),
+      BigInt(toNum(accountA!.createdAt ?? (accountA as any).created_at ?? 0)),
+      BigInt(toNum(accountB!.createdAt ?? (accountB as any).created_at ?? 0)),
     ];
-    const memberGenerations = [
-      generationOf(accountA!),
-      generationOf(accountB!),
+    const memberKinds = [
+      sourceKindOf(accountA!),
+      sourceKindOf(accountB!),
     ];
-    const expectedBatchHash = deriveBatchPayloadHash(
-      [hashIdA, hashIdB],
-      memberCreatedAts,
-      memberGenerations
-    );
-    const expectedBatchId = deriveBatchHashId(
-      [hashIdA, hashIdB],
-      memberCreatedAts,
-      memberGenerations
-    );
+    const memberHashes = [
+      Buffer.from(accountA!.hash),
+      Buffer.from(accountB!.hash),
+    ];
+    const expectedBatchHash = deriveBatchHash([
+      { hash: memberHashes[0], kind: memberKinds[0], createdAt: memberCreatedAts[0] },
+      { hash: memberHashes[1], kind: memberKinds[1], createdAt: memberCreatedAts[1] },
+    ]);
+    const expectedBatchId = deriveBatchHashId(expectedBatchHash);
+
     const { batchId } = await client.batch([hashIdA, hashIdB]);
     expect(Buffer.from(batchId)).to.deep.equal(Buffer.from(expectedBatchId));
 
     const batchAccount = await client.fetchHashAccount(batchId);
     expect(batchAccount).to.not.equal(null);
-    const batchType =
-      (batchAccount as any).hashType ?? (batchAccount as any).hash_type;
-    expect(toHashType(batchType)).to.eq(HashType.Batch);
-    expect(Buffer.from(batchAccount!.previous.hashId)).to.deep.equal(
-      Buffer.from(zeroHash)
+    const batchSource = hashSourceOf(batchAccount!);
+    expect(batchSource.kind).to.eq("batch");
+    expect(batchSource.members).to.have.lengthOf(2);
+    expect(Buffer.from(batchSource.members[0])).to.deep.equal(
+      Buffer.from(hashIdA)
     );
-    expect(toNum(batchAccount!.previous.createdAt)).to.eq(0);
-    expect(toNum(batchAccount!.previous.generation)).to.eq(0);
+    expect(Buffer.from(batchSource.members[1])).to.deep.equal(
+      Buffer.from(hashIdB)
+    );
+    const expectedRent = await rentForSource(batchSource);
     expect(Buffer.from(batchAccount!.hash)).to.deep.equal(
       Buffer.from(expectedBatchHash)
     );
-    expect(toNum(batchAccount!.createdAt)).to.be.greaterThan(0);
+    expect(generationOf(batchAccount!)).to.eq(0);
     expect(toNum(batchAccount!.voters)).to.eq(1);
+    expect(sourceKindOf(batchAccount!)).to.eq(HashSourceKind.Batch);
+
     const batchVote = await client.fetchVoteInfo(
       batchId,
       provider.wallet.publicKey
     );
     expect(batchVote).to.not.equal(null);
-    expect(toNum(batchVote!.amount)).to.eq(rentMin);
+    expect(toNum(batchVote!.amount)).to.eq(expectedRent);
     expect(await voteLamports(batchId, provider.wallet.publicKey)).to.eq(
       voteRentMin
     );
-    expect(await hashLamports(batchId)).to.eq(rentMin);
+    expect(await hashLamports(batchId)).to.eq(expectedRent);
 
     await client.unvote(batchId);
     await client.unvote(hashIdA);

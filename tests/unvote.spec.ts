@@ -3,6 +3,7 @@ import {
   airdrop,
   client,
   deriveGenesisHashId,
+  errorCodeOf,
   getRentMinimums,
   hashLamports,
   Keypair,
@@ -12,6 +13,7 @@ import {
   toNum,
   voteLamports,
 } from "./helpers";
+import { SystemProgram } from "@solana/web3.js";
 
 describe("unvote instruction", () => {
   let rentMin: number;
@@ -83,5 +85,45 @@ describe("unvote instruction", () => {
     account = await client.fetchHashAccount(hashId);
     expect(account).to.eq(null);
     expect(await hashLamports(hashId)).to.eq(0);
+  });
+
+  it("rejects unvote attempts from a non-voter", async () => {
+    const payload = randomHash();
+    const hashId = deriveGenesisHashId(payload);
+
+    await client.register(payload);
+
+    const second = Keypair.generate();
+    await airdrop(second.publicKey, 2 * LAMPORTS_PER_SOL);
+    await client.vote(hashId, second);
+
+    const outsider = Keypair.generate();
+    await airdrop(outsider.publicKey, 2 * LAMPORTS_PER_SOL);
+
+    const hashPda = client.hashPda(hashId);
+    const secondVotePda = client.votePda(hashId, second.publicKey);
+
+    try {
+      await client.program.methods
+        .unvote()
+        .accountsStrict({
+          hashAccount: hashPda,
+          voteInfo: secondVotePda,
+          user: outsider.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([outsider])
+        .rpc();
+      expect.fail("unvote should fail when caller is not the voter");
+    } catch (err: any) {
+      const code = errorCodeOf(err);
+      expect(code === 6003 || code === 2006).to.eq(
+        true,
+        `Unexpected error code for non-voter unvote: ${code}`
+      );
+    }
+
+    await client.unvote(hashId, second);
+    await client.unvote(hashId);
   });
 });

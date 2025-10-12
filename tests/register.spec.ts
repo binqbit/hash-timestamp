@@ -2,17 +2,19 @@ import { expect } from "chai";
 import {
   client,
   deriveGenesisHashId,
+  errorCodeOf,
   generationOf,
   getRentMinimums,
   hashLamports,
-  HashType,
+  HashSourceKind,
+  hashSourceOf,
   provider,
   randomHash,
-  toHashType,
+  sourceKindOf,
   toNum,
   voteLamports,
-  zeroHash,
 } from "./helpers";
+import { Keypair, SystemProgram } from "@solana/web3.js";
 
 describe("register instruction", () => {
   let rentMin: number;
@@ -32,14 +34,10 @@ describe("register instruction", () => {
     expect(account).to.not.equal(null);
     expect(toNum(account!.voters)).to.eq(1);
     expect(Buffer.from(account!.hash)).to.deep.equal(payload);
-    expect(Buffer.from(account!.previous.hashId)).to.deep.equal(zeroHash);
-    expect(toNum(account!.previous.createdAt)).to.eq(0);
-    expect(toNum(account!.previous.generation)).to.eq(0);
+    const source = hashSourceOf(account!);
+    expect(source.kind).to.eq("hash");
     expect(generationOf(account!)).to.eq(0);
-
-    const accountHashType =
-      (account as any).hashType ?? (account as any).hash_type;
-    expect(toHashType(accountHashType)).to.eq(HashType.Hash);
+    expect(sourceKindOf(account!)).to.eq(HashSourceKind.Hash);
     expect(await hashLamports(hashId)).to.eq(rentMin);
 
     const voteInfo = await client.fetchVoteInfo(
@@ -71,5 +69,48 @@ describe("register instruction", () => {
     }
 
     await client.unvote(hashId);
+  });
+
+  it("rejects registration when the provided hash account PDA is invalid", async () => {
+    const payload = randomHash();
+    const fakeHash = Keypair.generate().publicKey;
+    const fakeVote = Keypair.generate().publicKey;
+
+    try {
+      await client.program.methods
+        .register([...payload])
+        .accountsStrict({
+          hashAccount: fakeHash,
+          voteInfo: fakeVote,
+          user: provider.wallet.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+      expect.fail("register should fail when hash PDA is invalid");
+    } catch (err: any) {
+      expect(errorCodeOf(err)).to.eq(6001);
+    }
+  });
+
+  it("rejects registration when the vote PDA does not match the seeds", async () => {
+    const payload = randomHash();
+    const hashId = deriveGenesisHashId(payload);
+    const validHashPda = client.hashPda(hashId);
+    const wrongVotePda = Keypair.generate().publicKey;
+
+    try {
+      await client.program.methods
+        .register([...payload])
+        .accountsStrict({
+          hashAccount: validHashPda,
+          voteInfo: wrongVotePda,
+          user: provider.wallet.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+      expect.fail("register should fail when vote PDA is invalid");
+    } catch (err: any) {
+      expect(errorCodeOf(err)).to.eq(6001);
+    }
   });
 });
