@@ -12,17 +12,8 @@ import { createHash } from "crypto";
 import { HashTimestamp } from "../../target/types/hash_timestamp";
 
 // Must match on-chain layout
-export const HASH_ACCOUNT_SPACE =
-  8 /*disc*/ +
-  32 /*previous.hash*/ +
-  8 /*previous.created_at*/ +
-  8 /*previous.generation*/ +
-  32 /*hash*/ +
-  1 /*hash_type*/ +
-  8 /*voters*/ +
-  8 /*created_at*/ +
-  1 /*bump*/ +
-  6; /*padding*/
+export const HASH_ACCOUNT_BASE_SIZE =
+  8 /*disc*/ + 32 /*hash*/ + 8 /*voters*/ + 8 /*created_at*/ + 1; /*bump*/
 
 export const VOTE_INFO_SPACE =
   8 /*disc*/ +
@@ -35,12 +26,69 @@ export const VOTE_INFO_SPACE =
 const GENESIS_HASH = new Uint8Array(32);
 
 export type HashBytes = Uint8Array | Buffer | number[] | string;
+export type NumericLike = number | bigint | anchor.BN;
 
-export enum HashType {
+export enum HashSourceKind {
   Hash = 0,
   Account = 1,
   Branch = 2,
   Batch = 3,
+  Pack = 4,
+}
+
+export type HashSource =
+  | { kind: "hash" }
+  | { kind: "account"; account: PublicKey | HashBytes }
+  | {
+      kind: "branch";
+      previousHashId: HashBytes;
+      payload: HashBytes;
+      generation: bigint;
+    }
+  | { kind: "batch"; members: HashBytes[] }
+  | { kind: "pack" };
+
+export function hashSourceKindOf(
+  source: HashSource | HashSourceKind
+): HashSourceKind {
+  if (typeof source === "number") {
+    return source as HashSourceKind;
+  }
+  switch (source.kind) {
+    case "hash":
+      return HashSourceKind.Hash;
+    case "account":
+      return HashSourceKind.Account;
+    case "branch":
+      return HashSourceKind.Branch;
+    case "batch":
+      return HashSourceKind.Batch;
+    case "pack":
+      return HashSourceKind.Pack;
+    default:
+      throw new Error("unrecognized hash source variant");
+  }
+}
+
+export function hashAccountSpace(source: HashSource): number {
+  // Sum of: discriminator + fields + padding
+  const base = HASH_ACCOUNT_BASE_SIZE;
+  switch (source.kind) {
+    case "hash":
+      return base + 1 + 6;
+    case "account":
+      return base + 1 + 32 + 6;
+    case "branch":
+      return base + 1 + 32 + 32 + 8 + 6;
+    case "batch": {
+      const length = source.members.length;
+      return base + 1 + 4 + length * 32 + 2;
+    }
+    case "pack":
+      return base + 1 + 6;
+    default:
+      return base + 1;
+  }
 }
 
 export function to32Bytes(input: HashBytes): Uint8Array {
@@ -58,31 +106,19 @@ export function to32Bytes(input: HashBytes): Uint8Array {
   return new Uint8Array(buf);
 }
 
-export function deriveUpdatedHash(
-  previousHashId: HashBytes,
-  previousCreatedAt: number | anchor.BN,
-  newPayload: HashBytes,
-  hashType: HashType = HashType.Branch
+export function canonicalHashId(
+  hash: HashBytes,
+  source: HashSource | HashSourceKind
 ): Uint8Array {
-  const prevHashBytes = Buffer.from(to32Bytes(previousHashId));
-  const payloadBytes = Buffer.from(to32Bytes(newPayload));
-  const createdAt =
-    typeof previousCreatedAt === "number"
-      ? BigInt(previousCreatedAt)
-      : BigInt(previousCreatedAt.toString());
-  const createdBuf = Buffer.alloc(8);
-  createdBuf.writeBigInt64LE(createdAt);
-
+  const kind = hashSourceKindOf(source);
   const hasher = createHash("sha256");
-  hasher.update(new Uint8Array(prevHashBytes));
-  hasher.update(new Uint8Array(createdBuf));
-  hasher.update(new Uint8Array(payloadBytes));
-  hasher.update(new Uint8Array([hashType]));
+  hasher.update(new Uint8Array(to32Bytes(hash)));
+  hasher.update(new Uint8Array([kind]));
   return new Uint8Array(hasher.digest());
 }
 
-export function deriveGenesisHashId(payload: HashBytes): Uint8Array {
-  return deriveUpdatedHash(GENESIS_HASH, 0, payload, HashType.Hash);
+export function deriveGenesisHashId(hash: HashBytes): Uint8Array {
+  return canonicalHashId(hash, HashSourceKind.Hash);
 }
 
 function toBoolByte(value: boolean): Uint8Array {
@@ -120,7 +156,27 @@ export function deriveAccountHashId(
   info: AccountInfo<Buffer>
 ): Uint8Array {
   const metadataHash = deriveAccountMetadataHash(account, info);
-  return deriveUpdatedHash(GENESIS_HASH, 0, metadataHash, HashType.Account);
+  return canonicalHashId(metadataHash, HashSourceKind.Account);
+}
+
+export function deriveBranchHash(
+  previousCanonicalId: HashBytes,
+  previousCreatedAt: NumericLike,
+  previousGeneration: NumericLike,
+  previousSourceKind: HashSourceKind,
+  payload: HashBytes
+): Uint8Array {
+  const hasher = createHash("sha256");
+  hasher.update(new Uint8Array(to32Bytes(previousCanonicalId)));
+  hasher.update(new Uint8Array([previousSourceKind]));
+  hasher.update(new Uint8Array(toI64Bytes(previousCreatedAt)));
+  hasher.update(new Uint8Array(toU64Bytes(previousGeneration)));
+  hasher.update(new Uint8Array(to32Bytes(payload)));
+  return new Uint8Array(hasher.digest());
+}
+
+export function deriveBranchHashId(branchHash: HashBytes): Uint8Array {
+  return canonicalHashId(branchHash, HashSourceKind.Branch);
 }
 
 function numberToU64(value: number): bigint {
@@ -138,8 +194,6 @@ function numberToU64(value: number): bigint {
   }
   return bigint;
 }
-
-type NumericLike = number | bigint | anchor.BN;
 
 function toBigInt(value: NumericLike): bigint {
   if (typeof value === "number") {
@@ -194,40 +248,115 @@ function pickField<T = any>(object: any, ...keys: string[]): T | undefined {
   return undefined;
 }
 
-export function deriveBatchPayloadHash(
-  memberCanonicalIds: HashBytes[],
-  memberCreatedAts: NumericLike[],
-  memberGenerations: NumericLike[]
-): Uint8Array {
-  if (memberCanonicalIds.length === 0) {
-    throw new Error("batch requires at least one member");
+export function decodeHashSource(raw: any): HashSource {
+  if (!raw || typeof raw !== "object") {
+    return { kind: "hash" };
   }
-  if (
-    memberCanonicalIds.length !== memberCreatedAts.length ||
-    memberCanonicalIds.length !== memberGenerations.length
-  ) {
-    throw new Error("member canonical ids, timestamps, and generations length mismatch");
+
+  const entries = Object.entries(raw);
+  if (entries.length === 0) {
+    return { kind: "hash" };
+  }
+
+  const [variantRaw, value] = entries[0];
+  const variant = variantRaw.toLowerCase();
+
+  switch (variant) {
+    case "hash":
+      return { kind: "hash" };
+    case "account": {
+      const accountValue = pickField(
+        value,
+        "account",
+        "pubkey",
+        "pubKey",
+        "key"
+      );
+      return { kind: "account", account: accountValue ?? value };
+    }
+    case "branch": {
+      const previous = pickField(
+        value,
+        "previousHashId",
+        "previous_hash_id",
+        "previousHashID"
+      );
+      const payload = pickField(value, "payload");
+      const generation = pickField(value, "generation") ?? 0;
+      if (!previous || !payload) {
+        throw new Error("branch source missing previous hash or payload");
+      }
+      return {
+        kind: "branch",
+        previousHashId: to32Bytes(previous as HashBytes),
+        payload: to32Bytes(payload as HashBytes),
+        generation: coerceBigInt(generation),
+      };
+    }
+    case "batch": {
+      const membersValue = pickField(value, "members") ?? [];
+      const membersArray = Array.isArray(membersValue) ? membersValue : [];
+      const normalized = membersArray.map((member) =>
+        to32Bytes(member as HashBytes)
+      );
+      return { kind: "batch", members: normalized };
+    }
+    case "pack": {
+      return { kind: "pack" };
+    }
+    default:
+      return { kind: "hash" };
+  }
+}
+
+export function generationFromSource(source: HashSource): bigint {
+  return source.kind === "branch" ? source.generation : BigInt(0);
+}
+
+export interface PackMemberInput {
+  hash: HashBytes;
+  kind: HashSourceKind;
+  createdAt: NumericLike;
+}
+
+export interface BatchMemberInput {
+  hash: HashBytes;
+  kind: HashSourceKind;
+  createdAt: NumericLike;
+}
+
+export function derivePackHash(members: PackMemberInput[]): Uint8Array {
+  if (members.length === 0) {
+    throw new Error("pack requires at least one member");
   }
   const hasher = createHash("sha256");
-  for (let i = 0; i < memberCanonicalIds.length; i++) {
-    hasher.update(new Uint8Array(to32Bytes(memberCanonicalIds[i])));
-    hasher.update(new Uint8Array(toI64Bytes(memberCreatedAts[i])));
-    hasher.update(new Uint8Array(toU64Bytes(memberGenerations[i])));
+  for (const member of members) {
+    hasher.update(new Uint8Array(to32Bytes(member.hash)));
+    hasher.update(new Uint8Array([member.kind]));
+    hasher.update(new Uint8Array(toI64Bytes(member.createdAt)));
   }
   return new Uint8Array(hasher.digest());
 }
 
-export function deriveBatchHashId(
-  memberCanonicalIds: HashBytes[],
-  memberCreatedAts: NumericLike[],
-  memberGenerations: NumericLike[]
-): Uint8Array {
-  const aggregated = deriveBatchPayloadHash(
-    memberCanonicalIds,
-    memberCreatedAts,
-    memberGenerations
-  );
-  return deriveUpdatedHash(GENESIS_HASH, 0, aggregated, HashType.Batch);
+export function derivePackHashId(packHash: HashBytes): Uint8Array {
+  return canonicalHashId(packHash, HashSourceKind.Pack);
+}
+
+export function deriveBatchHash(members: BatchMemberInput[]): Uint8Array {
+  if (members.length === 0) {
+    throw new Error("batch requires at least one member");
+  }
+  const hasher = createHash("sha256");
+  for (const member of members) {
+    hasher.update(new Uint8Array(to32Bytes(member.hash)));
+    hasher.update(new Uint8Array([member.kind]));
+    hasher.update(new Uint8Array(toI64Bytes(member.createdAt)));
+  }
+  return new Uint8Array(hasher.digest());
+}
+
+export function deriveBatchHashId(batchHash: HashBytes): Uint8Array {
+  return canonicalHashId(batchHash, HashSourceKind.Batch);
 }
 
 export function deriveHashPda(
@@ -244,18 +373,22 @@ export function deriveHashPda(
 
 export function deriveVotePda(
   programId: PublicKey,
-  hashPda: PublicKey,
+  hashId: HashBytes,
   voter: PublicKey
 ): PublicKey {
+  const hashIdBytes = to32Bytes(hashId);
   const [pda] = PublicKey.findProgramAddressSync(
-    [Buffer.from("vote"), hashPda.toBuffer(), voter.toBuffer()],
+    [Buffer.from("vote"), voter.toBuffer(), Buffer.from(hashIdBytes)],
     programId
   );
   return pda;
 }
 
-export async function rentExemptForHash(conn: Connection): Promise<number> {
-  return conn.getMinimumBalanceForRentExemption(HASH_ACCOUNT_SPACE);
+export async function rentExemptForHash(
+  conn: Connection,
+  source: HashSource = { kind: "hash" }
+): Promise<number> {
+  return conn.getMinimumBalanceForRentExemption(hashAccountSpace(source));
 }
 
 export async function rentExemptForVote(conn: Connection): Promise<number> {
@@ -278,17 +411,20 @@ export class HashTimestampClient {
   hashPda(hash: HashBytes): PublicKey {
     return deriveHashPda(this.programId, hash);
   }
-  votePda(hashPda: PublicKey, voter: PublicKey): PublicKey {
-    return deriveVotePda(this.programId, hashPda, voter);
+  votePda(hashId: HashBytes, voter: PublicKey): PublicKey {
+    return deriveVotePda(this.programId, hashId, voter);
   }
 
-  async register(hash: HashBytes, payer?: Keypair): Promise<TransactionSignature> {
+  async register(
+    hash: HashBytes,
+    payer?: Keypair
+  ): Promise<TransactionSignature> {
     const hashBytes = to32Bytes(hash);
     const hashIdBytes = deriveGenesisHashId(hashBytes);
     const provider = this.program.provider as anchor.AnchorProvider;
     const walletPk = payer ? payer.publicKey : provider.wallet.publicKey;
     const hashPda = this.hashPda(hashIdBytes);
-    const votePda = this.votePda(hashPda, walletPk);
+    const votePda = this.votePda(hashIdBytes, walletPk);
 
     const builder = this.program.methods
       .register([...hashBytes])
@@ -305,12 +441,15 @@ export class HashTimestampClient {
     return builder.rpc();
   }
 
-  async vote(hashId: HashBytes, payer?: Keypair): Promise<TransactionSignature> {
+  async vote(
+    hashId: HashBytes,
+    payer?: Keypair
+  ): Promise<TransactionSignature> {
     const hashIdBytes = to32Bytes(hashId);
     const provider = this.program.provider as anchor.AnchorProvider;
     const walletPk = payer ? payer.publicKey : provider.wallet.publicKey;
     const hashPda = this.hashPda(hashIdBytes);
-    const votePda = this.votePda(hashPda, walletPk);
+    const votePda = this.votePda(hashIdBytes, walletPk);
 
     const builder = this.program.methods.vote().accountsStrict({
       hashAccount: hashPda,
@@ -325,12 +464,15 @@ export class HashTimestampClient {
     return builder.rpc();
   }
 
-  async unvote(hashId: HashBytes, payer?: Keypair): Promise<TransactionSignature> {
+  async unvote(
+    hashId: HashBytes,
+    payer?: Keypair
+  ): Promise<TransactionSignature> {
     const hashIdBytes = to32Bytes(hashId);
     const provider = this.program.provider as anchor.AnchorProvider;
     const walletPk = payer ? payer.publicKey : provider.wallet.publicKey;
     const hashPda = this.hashPda(hashIdBytes);
-    const votePda = this.votePda(hashPda, walletPk);
+    const votePda = this.votePda(hashIdBytes, walletPk);
 
     const builder = this.program.methods.unvote().accountsStrict({
       hashAccount: hashPda,
@@ -356,36 +498,43 @@ export class HashTimestampClient {
 
   async branch(
     oldHashId: HashBytes,
-    newHash: HashBytes,
+    payload: HashBytes,
     takeVote = true,
     payer?: Keypair
   ): Promise<TransactionSignature> {
     const provider = this.program.provider as anchor.AnchorProvider;
     const walletPk = payer ? payer.publicKey : provider.wallet.publicKey;
     const oldHashIdBytes = to32Bytes(oldHashId);
-    const newHashBytes = to32Bytes(newHash);
+    const payloadBytes = to32Bytes(payload);
     const oldHashPda = this.hashPda(oldHashIdBytes);
 
     const oldAccount = await this.fetchHashAccount(oldHashIdBytes);
     if (!oldAccount) {
       throw new Error("old hash account not found");
     }
-    const createdAt =
-      typeof oldAccount.createdAt === "number"
-        ? oldAccount.createdAt
-        : oldAccount.createdAt.toNumber();
-    const derivedBytes = deriveUpdatedHash(
+
+    const createdRaw =
+      (oldAccount as any).createdAt ?? (oldAccount as any).created_at ?? 0;
+    const createdAt = coerceBigInt(createdRaw);
+    const sourceRaw = (oldAccount as any).source ?? {};
+    const decodedSource = decodeHashSource(sourceRaw);
+    const parentGeneration = generationFromSource(decodedSource);
+    const sourceKind = hashSourceKindOf(decodedSource);
+    const newHash = deriveBranchHash(
       oldHashIdBytes,
       createdAt,
-      newHashBytes,
-      HashType.Branch
+      parentGeneration,
+      sourceKind,
+      payloadBytes
     );
-    const newHashPda = this.hashPda(derivedBytes);
-    const newVotePda = this.votePda(newHashPda, walletPk);
-    const oldVotePda = this.votePda(oldHashPda, walletPk);
+    const newGeneration = parentGeneration + BigInt(1);
+    const newId = canonicalHashId(newHash, HashSourceKind.Branch);
+    const newHashPda = this.hashPda(newId);
+    const newVotePda = this.votePda(newId, walletPk);
+    const oldVotePda = this.votePda(oldHashIdBytes, walletPk);
 
     const builder = this.program.methods
-      .branch([...newHashBytes], takeVote)
+      .branch([...payloadBytes], takeVote)
       .accountsStrict({
         oldHashAccount: oldHashPda,
         newHashAccount: newHashPda,
@@ -434,37 +583,29 @@ export class HashTimestampClient {
       return coerceBigInt(created);
     });
 
-    const memberGenerations = memberAccounts.map((account) => {
-      const prev =
-        (account as any).previous ??
-        (account as any).previousBlock ??
-        (account as any).previous_block ??
-        null;
-      if (!prev) {
-        return BigInt(0);
+    const memberSources = memberAccounts.map((account) =>
+      decodeHashSource((account as any).source ?? {})
+    );
+    const memberKinds = memberSources.map((source) => hashSourceKindOf(source));
+
+    const memberHashes = memberAccounts.map((account) => {
+      const hashValue = (account as any).hash;
+      if (!hashValue) {
+        throw new Error("batch member missing hash value");
       }
-      const prevHashRaw =
-        pickField(prev, "hashId", "hash_id", "hash") ?? new Uint8Array(32);
-      const prevHash = Buffer.from(to32Bytes(prevHashRaw as HashBytes));
-      const prevCreated = coerceBigInt(
-        pickField(prev, "createdAt", "created_at") ?? 0
-      );
-      const prevGeneration = coerceBigInt(
-        pickField(prev, "generation", "gen") ?? 0
-      );
-      const isZeroHash = prevHash.every((value) => value === 0);
-      const isGenesisPrev =
-        isZeroHash && prevCreated === BigInt(0) && prevGeneration === BigInt(0);
-      return isGenesisPrev ? BigInt(0) : prevGeneration + BigInt(1);
+      return to32Bytes(hashValue as HashBytes);
     });
 
-    const batchId = deriveBatchHashId(
-      memberIdBytes,
-      memberCreatedAts,
-      memberGenerations
+    const batchHash = deriveBatchHash(
+      memberHashes.map((hash, index) => ({
+        hash,
+        kind: memberKinds[index],
+        createdAt: memberCreatedAts[index],
+      }))
     );
+    const batchId = deriveBatchHashId(batchHash);
     const batchPda = this.hashPda(batchId);
-    const votePda = this.votePda(batchPda, walletPk);
+    const votePda = this.votePda(batchId, walletPk);
 
     const builder = this.program.methods
       .batch()
@@ -490,6 +631,86 @@ export class HashTimestampClient {
     return { signature, batchId };
   }
 
+  async pack(
+    memberIds: HashBytes[],
+    payer?: Keypair
+  ): Promise<{ signature: TransactionSignature; packId: Uint8Array }> {
+    if (memberIds.length === 0) {
+      throw new Error("pack requires at least one member");
+    }
+
+    const provider = this.program.provider as anchor.AnchorProvider;
+    const walletPk = payer ? payer.publicKey : provider.wallet.publicKey;
+
+    const memberIdBytes = memberIds.map((id) => to32Bytes(id));
+    const memberPdas = memberIdBytes.map((id) => this.hashPda(id));
+
+    const memberAccounts = await Promise.all(
+      memberIdBytes.map(async (id) => {
+        const account = await this.fetchHashAccount(id);
+        if (!account) {
+          throw new Error("pack member hash not found");
+        }
+        return account;
+      })
+    );
+
+    const memberCreatedAts = memberAccounts.map((account) => {
+      const created =
+        (account as any).createdAt ?? (account as any).created_at ?? null;
+      if (created === null || created === undefined) {
+        throw new Error("pack member missing created_at");
+      }
+      return coerceBigInt(created);
+    });
+
+    const memberSources = memberAccounts.map((account) =>
+      decodeHashSource((account as any).source ?? {})
+    );
+    const memberKinds = memberSources.map((source) => hashSourceKindOf(source));
+
+    const memberHashes = memberAccounts.map((account) => {
+      const hashValue = (account as any).hash;
+      if (!hashValue) {
+        throw new Error("pack member missing hash value");
+      }
+      return to32Bytes(hashValue as HashBytes);
+    });
+
+    const packHash = derivePackHash(
+      memberHashes.map((hash, index) => ({
+        hash,
+        kind: memberKinds[index],
+        createdAt: memberCreatedAts[index],
+      }))
+    );
+    const packId = derivePackHashId(packHash);
+    const packPda = this.hashPda(packId);
+    const votePda = this.votePda(packId, walletPk);
+
+    const builder = this.program.methods
+      .pack()
+      .accountsStrict({
+        packHashAccount: packPda,
+        voteInfo: votePda,
+        payer: walletPk,
+        systemProgram: SystemProgram.programId,
+      })
+      .remainingAccounts(
+        memberPdas.map((pubkey) => ({
+          pubkey,
+          isSigner: false,
+          isWritable: false,
+        }))
+      );
+
+    const signature = payer
+      ? await builder.signers([payer]).rpc()
+      : await builder.rpc();
+
+    return { signature, packId };
+  }
+
   async hashAccount(
     target: PublicKey,
     payer?: Keypair
@@ -507,24 +728,17 @@ export class HashTimestampClient {
     }
 
     const metadataHash = deriveAccountMetadataHash(target, info);
-    const hashId = deriveUpdatedHash(
-      GENESIS_HASH,
-      0,
-      metadataHash,
-      HashType.Account
-    );
+    const hashId = canonicalHashId(metadataHash, HashSourceKind.Account);
     const hashPda = this.hashPda(hashId);
-    const votePda = this.votePda(hashPda, walletPk);
+    const votePda = this.votePda(hashId, walletPk);
 
-    const builder = this.program.methods
-      .accountHash()
-      .accountsStrict({
-        hashAccount: hashPda,
-        voteInfo: votePda,
-        target,
-        payer: walletPk,
-        systemProgram: SystemProgram.programId,
-      });
+    const builder = this.program.methods.account().accountsStrict({
+      hashAccount: hashPda,
+      voteInfo: votePda,
+      target,
+      payer: walletPk,
+      systemProgram: SystemProgram.programId,
+    });
 
     const signature = payer
       ? await builder.signers([payer]).rpc()
@@ -550,8 +764,9 @@ export class HashTimestampClient {
   }
 
   async fetchVoteInfo(hash: HashBytes, voter: PublicKey) {
-    const hashPda = this.hashPda(hash);
-    const votePda = this.votePda(hashPda, voter);
+    const hashIdBytes = to32Bytes(hash);
+    const hashPda = this.hashPda(hashIdBytes);
+    const votePda = this.votePda(hashIdBytes, voter);
     // @ts-ignore
     if (this.program.account.voteInfo.fetchNullable) {
       // @ts-ignore
