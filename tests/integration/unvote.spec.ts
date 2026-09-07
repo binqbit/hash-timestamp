@@ -2,6 +2,7 @@ import { expect } from "chai";
 import {
   airdrop,
   client,
+  expectProgramError,
   deriveGenesisHashId,
   errorCodeOf,
   getRentMinimums,
@@ -12,7 +13,7 @@ import {
   randomHash,
   toNum,
   voteLamports,
-} from "./helpers";
+} from "../support/integration";
 import { SystemProgram } from "@solana/web3.js";
 
 describe("unvote instruction", () => {
@@ -73,10 +74,7 @@ describe("unvote instruction", () => {
     );
     expect(firstVoteInfo).to.eq(null);
 
-    const secondVoteInfo = await client.fetchVoteInfo(
-      hashId,
-      second.publicKey
-    );
+    const secondVoteInfo = await client.fetchVoteInfo(hashId, second.publicKey);
     expect(secondVoteInfo).to.not.equal(null);
     expect(await voteLamports(hashId, second.publicKey)).to.eq(voteRentMin);
 
@@ -103,8 +101,8 @@ describe("unvote instruction", () => {
     const hashPda = client.hashPda(hashId);
     const secondVotePda = client.votePda(hashId, second.publicKey);
 
-    try {
-      await client.program.methods
+    await expectProgramError(
+      client.program.methods
         .unvote()
         .accountsStrict({
           hashAccount: hashPda,
@@ -113,17 +111,53 @@ describe("unvote instruction", () => {
           systemProgram: SystemProgram.programId,
         })
         .signers([outsider])
-        .rpc();
-      expect.fail("unvote should fail when caller is not the voter");
-    } catch (err: any) {
-      const code = errorCodeOf(err);
-      expect(code === 6003 || code === 2006).to.eq(
-        true,
-        `Unexpected error code for non-voter unvote: ${code}`
-      );
-    }
+        .rpc(),
+      6003
+    );
 
     await client.unvote(hashId, second);
     await client.unvote(hashId);
+  });
+
+  it("rejects unvote when the hash account is already fully closed", async () => {
+    const payload = randomHash();
+    const hashId = deriveGenesisHashId(payload);
+    await client.register(payload);
+    await client.unvote(hashId);
+    expect(await client.fetchHashAccount(hashId)).to.equal(null);
+    await expectProgramError(client.unvote(hashId), 3012);
+  });
+
+  it("rejects a valid caller vote belonging to a different hash without changing either record", async () => {
+    const payloads = [randomHash(), randomHash()];
+    const ids = payloads.map(deriveGenesisHashId);
+    for (const payload of payloads) await client.register(payload);
+    const addresses = ids.flatMap((id) => [
+      client.hashPda(id),
+      client.votePda(id, provider.wallet.publicKey),
+    ]);
+    const before = await provider.connection.getMultipleAccountsInfo(addresses);
+    try {
+      try {
+        await client.program.methods
+          .unvote()
+          .accountsStrict({
+            hashAccount: addresses[0],
+            voteInfo: addresses[3],
+            user: provider.wallet.publicKey,
+            systemProgram: SystemProgram.programId,
+          })
+          .rpc();
+        expect.fail("a vote for another hash must be rejected");
+      } catch (error) {
+        expect(errorCodeOf(error)).to.equal(6001);
+      }
+      const after = await provider.connection.getMultipleAccountsInfo(
+        addresses
+      );
+      expect(after).to.deep.equal(before);
+    } finally {
+      for (const id of ids) await client.unvote(id);
+    }
   });
 });

@@ -17,7 +17,7 @@ import {
   sourceKindOf,
   toNum,
   voteLamports,
-} from "./helpers";
+} from "../support/integration";
 import { SystemProgram } from "@solana/web3.js";
 import * as anchor from "@coral-xyz/anchor";
 
@@ -38,7 +38,7 @@ describe("batch instruction", () => {
       await client.program.methods
         .batch()
         .accountsStrict({
-          batchHashAccount: batchPda,
+          hashAccount: batchPda,
           voteInfo: votePda,
           payer: provider.wallet.publicKey,
           systemProgram: SystemProgram.programId,
@@ -53,8 +53,7 @@ describe("batch instruction", () => {
 
   it("rejects member accounts not owned by the program", async () => {
     const outsider = Keypair.generate();
-    const rent =
-      await provider.connection.getMinimumBalanceForRentExemption(0);
+    const rent = await provider.connection.getMinimumBalanceForRentExemption(0);
     const createTx = new anchor.web3.Transaction().add(
       SystemProgram.createAccount({
         fromPubkey: provider.wallet.publicKey,
@@ -74,7 +73,7 @@ describe("batch instruction", () => {
       await client.program.methods
         .batch()
         .accountsStrict({
-          batchHashAccount: batchPda,
+          hashAccount: batchPda,
           voteInfo: votePda,
           payer: provider.wallet.publicKey,
           systemProgram: SystemProgram.programId,
@@ -86,6 +85,54 @@ describe("batch instruction", () => {
       expect.fail("batch should fail when members are not program owned");
     } catch (err: any) {
       expect(errorCodeOf(err)).to.eq(6011);
+    }
+  });
+
+  it("rejects duplicate canonical member IDs on chain", async () => {
+    const payload = randomHash();
+    const hashId = deriveGenesisHashId(payload);
+    await client.register(payload);
+
+    const account = await client.fetchHashAccount(hashId);
+    expect(account).to.not.equal(null);
+    const fingerprint = {
+      hash: Buffer.from(account!.hash),
+      kind: sourceKindOf(account!),
+      createdAt: BigInt(
+        toNum(account!.createdAt ?? (account as any).created_at ?? 0)
+      ),
+    };
+    const duplicateBatchHash = deriveBatchHash([fingerprint, fingerprint]);
+    const duplicateBatchId = deriveBatchHashId(duplicateBatchHash);
+    const duplicateBatchPda = client.hashPda(duplicateBatchId);
+    const duplicateVotePda = client.votePda(
+      duplicateBatchId,
+      provider.wallet.publicKey
+    );
+    const memberPda = client.hashPda(hashId);
+
+    try {
+      await client.program.methods
+        .batch()
+        .accountsStrict({
+          hashAccount: duplicateBatchPda,
+          voteInfo: duplicateVotePda,
+          payer: provider.wallet.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .remainingAccounts([
+          { pubkey: memberPda, isSigner: false, isWritable: false },
+          { pubkey: memberPda, isSigner: false, isWritable: false },
+        ])
+        .rpc();
+      expect.fail("batch should reject duplicate canonical member IDs");
+    } catch (err: any) {
+      expect(errorCodeOf(err)).to.eq(6026);
+    } finally {
+      if (await client.fetchHashAccount(duplicateBatchId)) {
+        await client.unvote(duplicateBatchId);
+      }
+      await client.unvote(hashId);
     }
   });
 
@@ -127,17 +174,22 @@ describe("batch instruction", () => {
       BigInt(toNum(accountA!.createdAt ?? (accountA as any).created_at ?? 0)),
       BigInt(toNum(accountB!.createdAt ?? (accountB as any).created_at ?? 0)),
     ];
-    const memberKinds = [
-      sourceKindOf(accountA!),
-      sourceKindOf(accountB!),
-    ];
+    const memberKinds = [sourceKindOf(accountA!), sourceKindOf(accountB!)];
     const memberHashes = [
       Buffer.from(accountA!.hash),
       Buffer.from(accountB!.hash),
     ];
     const expectedBatchHash = deriveBatchHash([
-      { hash: memberHashes[0], kind: memberKinds[0], createdAt: memberCreatedAts[0] },
-      { hash: memberHashes[1], kind: memberKinds[1], createdAt: memberCreatedAts[1] },
+      {
+        hash: memberHashes[0],
+        kind: memberKinds[0],
+        createdAt: memberCreatedAts[0],
+      },
+      {
+        hash: memberHashes[1],
+        kind: memberKinds[1],
+        createdAt: memberCreatedAts[1],
+      },
     ]);
     const expectedBatchId = deriveBatchHashId(expectedBatchHash);
 
@@ -148,6 +200,9 @@ describe("batch instruction", () => {
     expect(batchAccount).to.not.equal(null);
     const batchSource = hashSourceOf(batchAccount!);
     expect(batchSource.kind).to.eq("batch");
+    if (batchSource.kind !== "batch") {
+      throw new Error("expected batch hash source");
+    }
     expect(batchSource.members).to.have.lengthOf(2);
     expect(Buffer.from(batchSource.members[0])).to.deep.equal(
       Buffer.from(hashIdA)

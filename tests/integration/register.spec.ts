@@ -13,7 +13,7 @@ import {
   sourceKindOf,
   toNum,
   voteLamports,
-} from "./helpers";
+} from "../support/integration";
 import { Keypair, SystemProgram } from "@solana/web3.js";
 
 describe("register instruction", () => {
@@ -24,7 +24,7 @@ describe("register instruction", () => {
     ({ hash: rentMin, vote: voteRentMin } = await getRentMinimums());
   });
 
-  it("vote initializes a new hash account for the first voter", async () => {
+  it("register initializes a hash record and binds its first voter", async () => {
     const payload = randomHash();
     const hashId = deriveGenesisHashId(payload);
 
@@ -45,6 +45,8 @@ describe("register instruction", () => {
       provider.wallet.publicKey
     );
     expect(voteInfo).to.not.equal(null);
+    expect(voteInfo!.voter.equals(provider.wallet.publicKey)).to.equal(true);
+    expect(Buffer.from(voteInfo!.hashId)).to.deep.equal(Buffer.from(hashId));
     expect(toNum(voteInfo!.amount)).to.eq(rentMin);
     expect(await voteLamports(hashId, provider.wallet.publicKey)).to.eq(
       voteRentMin
@@ -112,5 +114,10 @@ describe("register instruction", () => {
     } catch (err: any) {
       expect(errorCodeOf(err)).to.eq(6001);
     }
+
+    expect(await client.fetchHashAccount(hashId)).to.equal(
+      null,
+      "a failed vote-account validation must roll back hash creation"
+    );
   });
 });

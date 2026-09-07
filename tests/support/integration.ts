@@ -1,7 +1,7 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import { Keypair, LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
-import { HashTimestamp } from "../target/types/hash_timestamp";
+import { HashTimestamp } from "../../target/types/hash_timestamp";
 
 import {
   HashSource,
@@ -23,18 +23,14 @@ import {
   hashSourceKindOf,
   rentExemptForHash,
   rentExemptForVote,
-} from "../app/sdk/hashTimestamp";
+} from "../../app/sdk/hashTimestamp";
 
-if (typeof (globalThis as any).structuredClone !== "function") {
-  (globalThis as any).structuredClone = (value: unknown) =>
-    value === undefined ? undefined : JSON.parse(JSON.stringify(value));
-}
+export { errorCodeOf, expectProgramError } from "./assertions";
 
 export const provider = anchor.AnchorProvider.env();
 anchor.setProvider(provider);
 
-export const program = anchor.workspace
-  .HashTimestamp as Program<HashTimestamp>;
+export const program = anchor.workspace.HashTimestamp as Program<HashTimestamp>;
 export const client = new HashTimestampClient(program);
 
 export const randomHash = () => Keypair.generate().publicKey.toBuffer();
@@ -68,15 +64,21 @@ export const airdrop = async (
   lamports = LAMPORTS_PER_SOL
 ) => {
   const sig = await provider.connection.requestAirdrop(pubkey, lamports);
-  await provider.connection.confirmTransaction(sig);
+  const confirmation = await provider.connection.confirmTransaction(
+    sig,
+    "confirmed"
+  );
+  if (confirmation.value.err) {
+    throw new Error(
+      `Airdrop failed: ${JSON.stringify(confirmation.value.err)}`
+    );
+  }
 };
 
 export const hashLamports = async (
   hashId: Buffer | Uint8Array
 ): Promise<number> => {
-  const info = await provider.connection.getAccountInfo(
-    client.hashPda(hashId)
-  );
+  const info = await provider.connection.getAccountInfo(client.hashPda(hashId));
   return info?.lamports ?? 0;
 };
 
@@ -105,25 +107,6 @@ export const getRentMinimums = async () => {
 export const rentForSource = async (source: HashSource) =>
   rentExemptForHash(provider.connection, source);
 
-export const errorCodeOf = (err: any): number | null => {
-  const direct = err?.error?.errorCode?.number;
-  if (typeof direct === "number") {
-    return direct;
-  }
-  const logs: unknown = err?.logs ?? err?.error?.logs;
-  if (Array.isArray(logs)) {
-    for (const entry of logs) {
-      if (typeof entry === "string") {
-        const match = entry.match(/custom program error: 0x([0-9a-f]+)/i);
-        if (match) {
-          return parseInt(match[1], 16);
-        }
-      }
-    }
-  }
-  return null;
-};
-
 export {
   Keypair,
   LAMPORTS_PER_SOL,
@@ -142,6 +125,3 @@ export {
   deriveGenesisHashId,
   hashAccountSpace,
 };
-
-
-

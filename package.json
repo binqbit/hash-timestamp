@@ -1,7 +1,16 @@
 {
   "scripts": {
-    "lint:fix": "prettier */*.js \"*/**/*{.js,.ts}\" -w",
-    "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check"
+    "build": "scripts/test.sh --build-only",
+    "test": "scripts/test.sh",
+    "test:unit": "ts-mocha -p ./tsconfig.json --fail-zero --forbid-only --forbid-pending \"tests/unit/**/*.spec.ts\"",
+    "test:integration": "ts-mocha -p ./tsconfig.json -t 60000 --fail-zero --forbid-only --forbid-pending \"tests/integration/**/*.spec.ts\"",
+    "test:rust": "cargo test --workspace",
+    "test:checks": "yarn lint && yarn typecheck && yarn test:rust && yarn check:architecture && yarn check:idl",
+    "typecheck": "tsc --noEmit",
+    "check:architecture": "node scripts/check-architecture.cjs",
+    "check:idl": "node scripts/check-idl.cjs",
+    "lint:fix": "prettier \"app/**/*.ts\" \"examples/**/*.ts\" \"tests/**/*.ts\" \"scripts/*.cjs\" --write",
+    "lint": "prettier \"app/**/*.ts\" \"examples/**/*.ts\" \"tests/**/*.ts\" \"scripts/*.cjs\" --check"
   },
   "dependencies": {
     "@coral-xyz/anchor": "0.31.1",

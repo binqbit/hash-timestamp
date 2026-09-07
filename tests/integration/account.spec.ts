@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import {
   client,
+  expectProgramError,
   deriveAccountMetadataHash,
   errorCodeOf,
   getRentMinimums,
@@ -9,11 +10,17 @@ import {
   hashSourceOf,
   provider,
   rentForSource,
+  airdrop,
   sourceKindOf,
   toNum,
   voteLamports,
-} from "./helpers";
-import { Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
+} from "../support/integration";
+import {
+  Keypair,
+  PublicKey,
+  SystemProgram,
+  Transaction,
+} from "@solana/web3.js";
 import * as anchor from "@coral-xyz/anchor";
 
 describe("account hash instruction", () => {
@@ -43,13 +50,11 @@ describe("account hash instruction", () => {
 
     await provider.sendAndConfirm(tx, [target]);
 
-    await client.hashAccount(target.publicKey);
-
+    const { hashId } = await client.hashAccount(target.publicKey);
     try {
-      await client.hashAccount(target.publicKey);
-      expect.fail("hashAccount should fail for duplicate targets");
-    } catch (err: any) {
-      expect(errorCodeOf(err)).to.eq(6009);
+      await expectProgramError(client.hashAccount(target.publicKey), 6009);
+    } finally {
+      await client.unvote(hashId);
     }
   });
 
@@ -72,8 +77,8 @@ describe("account hash instruction", () => {
 
     await provider.sendAndConfirm(tx, [target]);
 
-    try {
-      await client.program.methods
+    await expectProgramError(
+      client.program.methods
         .account()
         .accountsStrict({
           hashAccount: Keypair.generate().publicKey,
@@ -82,19 +87,9 @@ describe("account hash instruction", () => {
           payer: provider.wallet.publicKey,
           systemProgram: SystemProgram.programId,
         })
-        .rpc();
-      expect.fail("account_hash should fail when hash PDA is invalid");
-    } catch (err: any) {
-      const message = (err?.error?.errorMessage ?? err?.message ?? "").toLowerCase();
-      expect(
-        message.includes("address must be derived") ||
-          message.includes("invalid seeds") ||
-          errorCodeOf(err) === 6001
-      ).to.eq(
-        true,
-        `Unexpected error for invalid hash PDA: ${err?.error?.errorMessage ?? err}`
-      );
-    }
+        .rpc(),
+      6001
+    );
   });
 
   it("creates a hash from an account's metadata", async () => {
@@ -127,6 +122,9 @@ describe("account hash instruction", () => {
     expect(hashAccount).to.not.equal(null);
     const source = hashSourceOf(hashAccount!);
     expect(source.kind).to.eq("account");
+    if (source.kind !== "account") {
+      throw new Error("expected account hash source");
+    }
     const expectedRent = await rentForSource(source);
     const sourceAccountBuffer =
       source.account instanceof PublicKey
@@ -158,6 +156,50 @@ describe("account hash instruction", () => {
     expect(toNum(voteInfo!.amount)).to.eq(expectedRent);
     expect(await voteLamports(hashId, provider.wallet.publicKey)).to.eq(
       voteRentMin
+    );
+
+    await client.unvote(hashId);
+    expect(await hashLamports(hashId)).to.eq(0);
+  });
+
+  it("keeps the account-hash stable if source account changes after hashing", async () => {
+    const target = Keypair.generate();
+    const space = 32;
+    const rent = await provider.connection.getMinimumBalanceForRentExemption(
+      space
+    );
+
+    const createTx = new Transaction().add(
+      SystemProgram.createAccount({
+        fromPubkey: provider.wallet.publicKey,
+        newAccountPubkey: target.publicKey,
+        lamports: rent + 5_000,
+        space,
+        programId: SystemProgram.programId,
+      })
+    );
+    await provider.sendAndConfirm(createTx, [target]);
+
+    const before = await provider.connection.getAccountInfo(target.publicKey);
+    expect(before).to.not.equal(null);
+
+    const { hashId, metadataHash } = await client.hashAccount(target.publicKey);
+    const hashAccount = await client.fetchHashAccount(hashId);
+    expect(hashAccount).to.not.equal(null);
+    expect(Buffer.from(hashAccount!.hash)).to.deep.equal(
+      Buffer.from(metadataHash)
+    );
+
+    await airdrop(target.publicKey, 1_000);
+
+    const after = await provider.connection.getAccountInfo(target.publicKey);
+    expect(after).to.not.equal(null);
+    expect(after!.lamports).to.not.eq(before!.lamports);
+
+    const hashAccountAfter = await client.fetchHashAccount(hashId);
+    expect(hashAccountAfter).to.not.equal(null);
+    expect(Buffer.from(hashAccountAfter!.hash)).to.deep.equal(
+      Buffer.from(metadataHash)
     );
 
     await client.unvote(hashId);

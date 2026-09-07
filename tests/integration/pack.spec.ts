@@ -16,7 +16,7 @@ import {
   sourceKindOf,
   toNum,
   voteLamports,
-} from "./helpers";
+} from "../support/integration";
 import { SystemProgram } from "@solana/web3.js";
 import * as anchor from "@coral-xyz/anchor";
 
@@ -43,20 +43,33 @@ describe("pack instruction", () => {
     expect(accountB).to.not.equal(null);
 
     const memberCreatedAts = [
-      BigInt(toNum((accountA as any)?.createdAt ?? (accountA as any)?.created_at ?? 0)),
-      BigInt(toNum((accountB as any)?.createdAt ?? (accountB as any)?.created_at ?? 0)),
+      BigInt(
+        toNum(
+          (accountA as any)?.createdAt ?? (accountA as any)?.created_at ?? 0
+        )
+      ),
+      BigInt(
+        toNum(
+          (accountB as any)?.createdAt ?? (accountB as any)?.created_at ?? 0
+        )
+      ),
     ];
-    const memberKinds = [
-      sourceKindOf(accountA!),
-      sourceKindOf(accountB!),
-    ];
+    const memberKinds = [sourceKindOf(accountA!), sourceKindOf(accountB!)];
     const memberHashes = [
       Buffer.from((accountA as any)?.hash ?? []),
       Buffer.from((accountB as any)?.hash ?? []),
     ];
     const expectedPackHash = derivePackHash([
-      { hash: memberHashes[0], kind: memberKinds[0], createdAt: memberCreatedAts[0] },
-      { hash: memberHashes[1], kind: memberKinds[1], createdAt: memberCreatedAts[1] },
+      {
+        hash: memberHashes[0],
+        kind: memberKinds[0],
+        createdAt: memberCreatedAts[0],
+      },
+      {
+        hash: memberHashes[1],
+        kind: memberKinds[1],
+        createdAt: memberCreatedAts[1],
+      },
     ]);
     const expectedPackId = derivePackHashId(expectedPackHash);
 
@@ -102,7 +115,7 @@ describe("pack instruction", () => {
       await client.program.methods
         .pack()
         .accountsStrict({
-          packHashAccount: packPda,
+          hashAccount: packPda,
           voteInfo: votePda,
           payer: provider.wallet.publicKey,
           systemProgram: SystemProgram.programId,
@@ -117,8 +130,7 @@ describe("pack instruction", () => {
 
   it("rejects member accounts owned by other programs", async () => {
     const outsider = Keypair.generate();
-    const rent =
-      await provider.connection.getMinimumBalanceForRentExemption(0);
+    const rent = await provider.connection.getMinimumBalanceForRentExemption(0);
     const tx = new anchor.web3.Transaction().add(
       SystemProgram.createAccount({
         fromPubkey: provider.wallet.publicKey,
@@ -138,7 +150,7 @@ describe("pack instruction", () => {
       await client.program.methods
         .pack()
         .accountsStrict({
-          packHashAccount: packPda,
+          hashAccount: packPda,
           voteInfo: votePda,
           payer: provider.wallet.publicKey,
           systemProgram: SystemProgram.programId,
@@ -150,6 +162,54 @@ describe("pack instruction", () => {
       expect.fail("pack should reject non program-owned members");
     } catch (err: any) {
       expect(errorCodeOf(err)).to.eq(6013);
+    }
+  });
+
+  it("rejects duplicate canonical member IDs on chain", async () => {
+    const payload = randomHash();
+    const hashId = deriveGenesisHashId(payload);
+    await client.register(payload);
+
+    const account = await client.fetchHashAccount(hashId);
+    expect(account).to.not.equal(null);
+    const fingerprint = {
+      hash: Buffer.from((account as any)?.hash ?? []),
+      kind: sourceKindOf(account!),
+      createdAt: BigInt(
+        toNum((account as any)?.createdAt ?? (account as any)?.created_at ?? 0)
+      ),
+    };
+    const duplicatePackHash = derivePackHash([fingerprint, fingerprint]);
+    const duplicatePackId = derivePackHashId(duplicatePackHash);
+    const duplicatePackPda = client.hashPda(duplicatePackId);
+    const duplicateVotePda = client.votePda(
+      duplicatePackId,
+      provider.wallet.publicKey
+    );
+    const memberPda = client.hashPda(hashId);
+
+    try {
+      await client.program.methods
+        .pack()
+        .accountsStrict({
+          hashAccount: duplicatePackPda,
+          voteInfo: duplicateVotePda,
+          payer: provider.wallet.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .remainingAccounts([
+          { pubkey: memberPda, isSigner: false, isWritable: false },
+          { pubkey: memberPda, isSigner: false, isWritable: false },
+        ])
+        .rpc();
+      expect.fail("pack should reject duplicate canonical member IDs");
+    } catch (err: any) {
+      expect(errorCodeOf(err)).to.eq(6027);
+    } finally {
+      if (await client.fetchHashAccount(duplicatePackId)) {
+        await client.unvote(duplicatePackId);
+      }
+      await client.unvote(hashId);
     }
   });
 });

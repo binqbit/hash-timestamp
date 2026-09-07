@@ -8,6 +8,7 @@ import {
   generationOf,
   getRentMinimums,
   hashLamports,
+  errorCodeOf,
   HashSourceKind,
   hashSourceOf,
   Keypair,
@@ -18,7 +19,8 @@ import {
   sourceKindOf,
   toNum,
   voteLamports,
-} from "./helpers";
+} from "../support/integration";
+import { SystemProgram } from "@solana/web3.js";
 
 describe("branch instruction", () => {
   let rentMin: number;
@@ -68,6 +70,9 @@ describe("branch instruction", () => {
     expect(newAccount).to.not.equal(null);
     const newSource = hashSourceOf(newAccount!);
     expect(newSource.kind).to.eq("branch");
+    if (newSource.kind !== "branch") {
+      throw new Error("expected branch hash source");
+    }
     const expectedRent = await rentForSource(newSource);
     expect(Buffer.from(newSource.previousHashId)).to.deep.equal(
       Buffer.from(hashId)
@@ -160,6 +165,9 @@ describe("branch instruction", () => {
     expect(newAccount).to.not.equal(null);
     const newSource = hashSourceOf(newAccount!);
     expect(newSource.kind).to.eq("branch");
+    if (newSource.kind !== "branch") {
+      throw new Error("expected branch hash source");
+    }
     const expectedRent = await rentForSource(newSource);
     expect(Buffer.from(newSource.previousHashId)).to.deep.equal(
       Buffer.from(hashId)
@@ -219,6 +227,9 @@ describe("branch instruction", () => {
     expect(newAccount).to.not.equal(null);
     const branchSource = hashSourceOf(newAccount!);
     expect(branchSource.kind).to.eq("branch");
+    if (branchSource.kind !== "branch") {
+      throw new Error("expected branch hash source");
+    }
     const expectedRent = await rentForSource(branchSource);
     expect(Buffer.from(branchSource.previousHashId)).to.deep.equal(
       Buffer.from(baseId)
@@ -258,5 +269,150 @@ describe("branch instruction", () => {
     }
 
     await client.unvote(hashId);
+  });
+
+  it("requires the caller's exact old vote when migrating", async () => {
+    const payload = randomHash();
+    const hashId = deriveGenesisHashId(payload);
+
+    await client.register(payload);
+
+    const oldAccount = await client.fetchHashAccount(hashId);
+    expect(oldAccount).to.not.equal(null);
+
+    const createdAt = toNum(oldAccount!.createdAt);
+    const generation = generationOf(oldAccount!);
+    const parentKind = sourceKindOf(oldAccount!);
+    const nextPayload = randomHash();
+    const branchHash = deriveBranchHash(
+      hashId,
+      createdAt,
+      generation,
+      parentKind,
+      nextPayload
+    );
+    const newId = deriveBranchHashId(branchHash);
+
+    try {
+      await client.program.methods
+        .branch([...nextPayload], true)
+        .accountsStrict({
+          hashAccount: client.hashPda(hashId),
+          voteInfo: Keypair.generate().publicKey,
+          newHashAccount: client.hashPda(newId),
+          newVoteInfo: client.votePda(newId, provider.wallet.publicKey),
+          user: provider.wallet.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+      expect.fail(
+        "Expected branch to fail when migrating without the exact old vote account"
+      );
+    } catch (err: any) {
+      expect(errorCodeOf(err)).to.eq(6006);
+    } finally {
+      await client.unvote(hashId);
+    }
+  });
+
+  it("rolls back child creation when the new vote PDA is invalid", async () => {
+    const payload = randomHash();
+    const hashId = deriveGenesisHashId(payload);
+    await client.register(payload);
+
+    const parentBefore = await client.fetchHashAccount(hashId);
+    expect(parentBefore).to.not.equal(null);
+    const parentLamportsBefore = await hashLamports(hashId);
+    const parentVoteLamportsBefore = await voteLamports(
+      hashId,
+      provider.wallet.publicKey
+    );
+    const nextPayload = randomHash();
+    const branchHash = deriveBranchHash(
+      hashId,
+      toNum(parentBefore!.createdAt),
+      generationOf(parentBefore!),
+      sourceKindOf(parentBefore!),
+      nextPayload
+    );
+    const newId = deriveBranchHashId(branchHash);
+
+    try {
+      await client.program.methods
+        .branch([...nextPayload], true)
+        .accountsStrict({
+          hashAccount: client.hashPda(hashId),
+          voteInfo: client.votePda(hashId, provider.wallet.publicKey),
+          newHashAccount: client.hashPda(newId),
+          newVoteInfo: Keypair.generate().publicKey,
+          user: provider.wallet.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+      expect.fail("Expected branch to reject an invalid child vote PDA");
+    } catch (err: any) {
+      expect(errorCodeOf(err)).to.eq(6001);
+    }
+
+    const parentAfter = await client.fetchHashAccount(hashId);
+    expect(parentAfter).to.not.equal(null);
+    expect(toNum(parentAfter!.voters)).to.eq(toNum(parentBefore!.voters));
+    expect(await hashLamports(hashId)).to.eq(parentLamportsBefore);
+    expect(
+      await client.fetchVoteInfo(hashId, provider.wallet.publicKey)
+    ).to.not.equal(null);
+    expect(await voteLamports(hashId, provider.wallet.publicKey)).to.eq(
+      parentVoteLamportsBefore
+    );
+    expect(await client.fetchHashAccount(newId)).to.equal(
+      null,
+      "a failed child vote validation must roll back the child hash"
+    );
+
+    await client.unvote(hashId);
+  });
+
+  it("requires a system placeholder when not migrating and the old vote PDA is not provided", async () => {
+    const payload = randomHash();
+    const hashId = deriveGenesisHashId(payload);
+
+    await client.register(payload);
+
+    const oldAccount = await client.fetchHashAccount(hashId);
+    expect(oldAccount).to.not.equal(null);
+
+    const createdAt = toNum(oldAccount!.createdAt);
+    const generation = generationOf(oldAccount!);
+    const parentKind = sourceKindOf(oldAccount!);
+    const nextPayload = randomHash();
+    const branchHash = deriveBranchHash(
+      hashId,
+      createdAt,
+      generation,
+      parentKind,
+      nextPayload
+    );
+    const newId = deriveBranchHashId(branchHash);
+
+    try {
+      await client.program.methods
+        .branch([...nextPayload], false)
+        .accountsStrict({
+          hashAccount: client.hashPda(hashId),
+          voteInfo: provider.wallet.publicKey,
+          newHashAccount: client.hashPda(newId),
+          newVoteInfo: client.votePda(newId, provider.wallet.publicKey),
+          user: provider.wallet.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+      expect.fail(
+        "Expected branch to fail when not migrating with non-system placeholder"
+      );
+    } catch (err: any) {
+      expect(errorCodeOf(err)).to.eq(6006);
+    } finally {
+      await client.unvote(hashId);
+    }
   });
 });
