@@ -1,39 +1,221 @@
 # SDK Guide
 
-The TypeScript helper in app/sdk/hashTimestamp.ts exists so client developers can interact with the Hash Timestamp program without copying Rust logic into their applications. This guide explains what the helper provides and how to apply it during development.
+The TypeScript SDK derives the contract's IDs and PDAs, reads accounts, and submits
+its instructions. Start from `app/sdk/hashTimestamp.ts`; `hashUtils.ts` remains a
+compatible utility-only import path. This repository does not declare a published
+SDK package.
 
-## Getting Started
+## First call: register a file and read its record
 
-The helper expects an Anchor workspace with the Hash Timestamp IDL available. Once your application has an Anchor provider, construct the helper by passing that Program<HashTimestamp> instance into the exported client class. The client keeps a reference to the program, its connection, and the program identifier so that later calls stay consistent with on chain expectations.
+Use the repository's pinned dependencies (`yarn install --frozen-lockfile`).
+Run `yarn build` if `target/idl/hash_timestamp.json` and
+`target/types/hash_timestamp.ts` are missing or stale. Your application supplies a
+`Program<HashTimestamp>` with the matching IDL, deployed program address, cluster
+connection and funded signing provider.
 
-## Available Capabilities
+This is a Node.js example; the SDK uses Node `crypto` and `Buffer`.
+Browser bundling is not established.
 
-The helper offers a library of pure utilities:
+```ts
+import { createHash } from "crypto";
+import type { Program } from "@coral-xyz/anchor";
+import type { HashTimestamp } from "./target/types/hash_timestamp";
+import {
+  HashTimestampClient,
+  deriveGenesisHashId,
+  decodeHashSource,
+} from "./app/sdk/hashTimestamp";
 
-- Canonical hash helpers that mirror on chain hashing rules, allowing you to derive identifiers for register, branch, batch, pack, and account metadata flows.
-- PDA derivation helpers for hash accounts and vote accounts so you can predict addresses before submitting transactions.
-- Rent estimation helpers that query the Solana cluster for the current minimum balance required to keep hash or vote accounts rent exempt.
+export async function timestampFile(
+  program: Program<HashTimestamp>,
+  fileBytes: Uint8Array
+) {
+  const client = new HashTimestampClient(program);
+  const fileHash = createHash("sha256").update(fileBytes).digest();
+  const hashId = deriveGenesisHashId(fileHash);
 
-On top of those utilities, the client exposes high level methods that submit transactions on your behalf. Each method prepares the correct account list and arguments for the corresponding instruction:
+  const signature = await client.register(fileHash);
+  const record = await client.fetchHashAccount(hashId);
+  if (!record) throw new Error("Hash record was not found");
 
-- register stores a new standalone hash and records the caller as the first voter.
-- accountHash derives a hash from another Solana account's metadata and registers it.
-- vote and unvote manage individual deposits tied to a hash.
-- branch, batch, and pack create composite hashes while respecting program validation rules.
-- verify performs a lightweight existence check against a hash account.
+  return {
+    signature,
+    hashId,
+    address: client.hashPda(hashId),
+    createdAt: record.createdAt.toString(),
+    source: decodeHashSource(record.source),
+  };
+}
+```
 
-## Return Values and Proof Tracking
+Import paths above assume a file at the repository root. The complete,
+type-checked [examples/sdk-usage.ts](../examples/sdk-usage.ts) also provides
+`createClient(idl, provider)`, `registerFile` and `branchFromFile`.
+Importing the examples alone does not send any transactions.
 
-Transaction methods return either a signature or a pair of values containing the signature and the derived canonical identifier. Capture these results so you can reference them later when verifying that a hash proof persists on chain. The helper also provides fetchHashAccount and fetchVoteInfo functions to read back deserialized account data, which is useful for validating voter counts, rent deposits, and lineage.
+Registration already creates the caller's vote. Do not immediately call `vote`
+again with the same signer. `unvote` is a state-changing operation: removing
+the final vote closes the hash record.
 
-## Error Interpretation
+## Raw hash, canonical ID and PDA are different values
 
-When the program rejects a transaction, Anchor surfaces the ErrorCode number through the thrown exception. Inspect err.error.errorCode.number to determine which condition occurred. The mapping between codes and explanations is documented in docs/instructions.md. Use that mapping to present meaningful messages to tooling users.
+| Value        | Meaning                                                     | Example                         |
+| ------------ | ----------------------------------------------------------- | ------------------------------- |
+| Raw hash     | 32-byte digest or value registered by the caller            | `client.register(fileHash)`     |
+| Canonical ID | Hash plus source discriminator, committed into a new digest | `deriveGenesisHashId(fileHash)` |
+| PDA          | Solana account address derived from the ID and program      | `client.hashPda(hashId)`        |
 
-## Workflow Tips
+`hashPda`, `fetchHashAccount`, `vote`, `unvote`, `verify`, the parent of
+`branch`, and Batch/Pack members take **canonical IDs**, not raw file hashes.
+`RestoreProofInput.hash`, by contrast, is the stored raw hash of that proof link.
+Use the derivation helpers; do not construct these identities by hand.
 
-- Reuse the canonical identifier helpers when composing custom transactions so that every PDA derived client side matches the on chain expectation.
-- Query rent minimums only when necessary and cache the results per cluster to reduce RPC load.
-- Combine fetchHashAccount with the verify method to double check whether a proof remains valid after each mutation.
+Timestamp and lifecycle semantics are defined in the
+[protocol invariants](instructions.md#core-primitives-and-invariants).
 
-By relying on the SDK rather than hand assembling accounts, developers reduce the risk of seed mismatches, under funded accounts, or mis ordered remaining accounts when building complex flows such as branch migrations or batch compositions.
+## Public methods
+
+Except for `verify`, transaction methods accept an optional instruction payer
+`Keypair`; omission uses the provider wallet. All results below are promises,
+except the PDA methods.
+
+| Method                                               | Work                                   | Result                                                   |
+| ---------------------------------------------------- | -------------------------------------- | -------------------------------------------------------- |
+| `hashPda(hashId)`, `votePda(hashId, voter)`          | Local derivation only                  | `PublicKey`                                              |
+| `fetchHashAccount(hashId)`                           | RPC read                               | `HashAccountData \| null`                                |
+| `fetchVoteInfo(hashId, voter)`                       | RPC read                               | `VoteInfoData \| null`                                   |
+| `register(hash, payer?)`                             | Transaction                            | Signature string                                         |
+| `vote(hashId, payer?)`                               | Transaction                            | Signature string                                         |
+| `unvote(hashId, payer?)`                             | Transaction                            | Signature string                                         |
+| `verify(hashId)`                                     | Transaction, not a local check         | Signature string                                         |
+| `branch(parentId, payload, takeVote = true, payer?)` | Parent RPC read + transaction          | Signature string                                         |
+| `batch(memberIds, payer?)`                           | Ordered member RPC reads + transaction | `BatchResult: { signature, batchId }`                    |
+| `pack(memberIds, payer?)`                            | Ordered member RPC reads + transaction | `PackResult: { signature, packId }`                      |
+| `hashAccount(targetPublicKey, payer?)`               | Target RPC read + transaction          | `AccountHashResult: { signature, hashId, metadataHash }` |
+| `restore(proof, optionsOrPayer?, payer?)`            | Transaction                            | `RestoreResult: { signature, restoredIds }`              |
+
+Fetch methods return **raw Anchor account data**: integer fields such as
+`createdAt`, `voters` and vote `amount` remain `BN`; `source` remains the
+IDL enum. Use `decodeHashSource(record.source)` for the SDK's tagged source
+union. Prefer `.toString()` or `BigInt(value.toString())` over `.toNumber()`
+for potentially large integers.
+
+For ordinary existence reads, use `fetchHashAccount`. Both `verify` and
+proof-only `restore` submit on-chain transactions, pay fees and return signatures;
+neither returns a boolean or guarantees that state will remain unchanged.
+
+## Signing, rent and fees
+
+```ts
+await client.register(fileHash); // provider wallet is the instruction signer
+await client.register(otherFileHash, keypair); // explicit instruction signer
+```
+
+An explicit `payer` selects the instruction signer/rent payer and is passed to
+Anchor's `.signers([payer])`. It does not replace the configured provider wallet.
+With the normal Anchor provider, the provider wallet still pays transaction fees.
+Fund both roles as appropriate. The SDK delegates submission and confirmation
+policy to the supplied provider; it does not add retries or rebuild transactions.
+
+`rentExemptForHash(connection, source)` and `rentExemptForVote(connection)`
+estimate account rent through that connection. They are not total transaction
+cost estimates. Do not assume a cached rent amount remains valid.
+
+## Branches and aggregates
+
+`branch(parentId, payload)` takes a 32-byte payload. Its default `takeVote=true`
+creates the child vote and releases the caller's parent vote afterward. Fund the
+child accounts upfront; the old-vote refund happens later.
+
+Use `branch(parentId, payload, false)` to leave parent support unchanged.
+This mode does not require an existing parent vote. The
+[branchFromFile example](../examples/sdk-usage.ts) saves a restoration proof
+for a raw Hash parent without withdrawing either vote.
+
+```ts
+const { signature, batchId } = await client.batch([firstId, secondId]);
+const { packId } = await client.pack([firstId, secondId]);
+```
+
+Aggregate inputs must be nonempty, unique canonical IDs in the intended order.
+Branch, aggregate and account-metadata calls read state before submission; if it
+changes, re-read and re-derive affected inputs. See
+[application state handling](api.md#coordinate-transactions-and-reads).
+
+## Restore: anchored history, with or without materialization
+
+Pass a complete `RestoreProofInput[]` with the live anchor at index zero.
+Other proof entries may be in any order; Batch/Pack member order must remain exact.
+
+```ts
+const { signature, restoredIds } = await client.restore(proof);
+await client.restore(proof, payer);
+await client.restore(proof, { createAccounts: false }, payer);
+```
+
+- `createAccounts` defaults to true and requests every non-anchor entry with
+  non-null `params`. This is not arbitrary-target selection.
+- `createAccounts: false` submits proof validation without ancestor account
+  pairs. It still sends a transaction and must satisfy the full proof rules,
+  including required Account snapshots.
+- `restoredIds` lists requested canonical IDs, not only newly created accounts.
+  It is empty in proof-only mode.
+- `RestoreApi` is a compatibility wrapper around `client.restore`.
+  An optional instruction payer can be supplied as the second argument, or
+  as the third argument after options.
+
+The caller supplies the history; the SDK neither discovers it nor splits large
+proofs across transactions. See the [restore reference](instructions.md#restore)
+for parameter variants, existing-record conflicts, nested aggregates and
+[recovery limits](instructions.md#recovery-limits).
+
+## Inputs, encoders and errors
+
+- Hash/ID strings are hexadecimal **without `0x`** and must decode to exactly
+  32 bytes. General byte payloads may have other lengths. Malformed hex,
+  incomplete byte pairs, sparse arrays and non-integer/out-of-range bytes are
+  rejected rather than silently truncated or wrapped.
+- Account-source identities accept `PublicKey`, bytes, hex and base58.
+  Prefer `PublicKey` for account identities; hash strings are never base58.
+- Use `bigint` or `BN` for exact large integers. Timestamps must fit signed
+  i64 and generations unsigned u64. JavaScript numbers already rounded before
+  reaching the SDK cannot be recovered.
+- Snapshot lamports/rentEpoch retain the existing clamping into u64 range;
+  generation and timestamp validation is strict, not clamping.
+- Unknown numeric source tags, fractional tags, `NaN` and infinity are rejected.
+  `decodeHashSource` retains legacy field aliases and its tolerant fallback
+  for unknown variants; it is not a security validator for untrusted input.
+
+Public wire adapters are `decodeHashSource`, `encodeHashSource` and
+`encodeRestoreParameters`. Their encoded types come from the generated IDL.
+Complete-proof preparation and fingerprint encoding are internal, not separately
+exported utilities. Other public helpers derive hashes/IDs/PDAs and account sizes.
+Use `client.program` for lower-level Anchor builders or custom account sets.
+
+Client prechecks throw ordinary errors, for example
+`old hash account not found`, `target account not found`, and
+`batch member IDs must be unique`. RPC transport/decode errors are distinct
+from program errors. Modern `fetchNullable` errors propagate; the retained
+legacy fallback catches any `fetch` error and returns null. If you supply an
+older/custom reader, that fallback cannot distinguish absence from an RPC failure.
+
+```ts
+import { AnchorError } from "@coral-xyz/anchor";
+
+try {
+  await client.restore(proof);
+} catch (caught) {
+  if (caught instanceof AnchorError) {
+    console.error(caught.error.errorCode.number, caught.error.errorCode.code);
+  }
+  throw caught; // preserve transport, SDK and program error details
+}
+```
+
+Map actual program codes using the [instruction guide](instructions.md).
+Missing typed accounts may fail Anchor initialization before a handler's
+`HashNotFound` check. A Restore error can mean a malformed proof, conflicting
+current state, or invalid account setup; it does not always mean false history.
+
+For module responsibilities, see [Architecture](architecture.md#repository-map).
+For validation commands and test setup, see [Testing](testing.md).

@@ -1,59 +1,180 @@
 # Architecture
 
-Hash Timestamp is organised around a small set of concepts that keep hash proofs deterministic and easy to audit on Solana. This note explains those building blocks without tying them to individual source files.
+Module responsibilities and execution boundaries. Public instruction behavior is
+defined in [instructions.md](instructions.md); client usage is in [sdk.md](sdk.md).
 
-## State Model
+## Layers and dependencies
 
-Two account types drive the program:
+| Layer          | Responsibility                                                         |
+| -------------- | ---------------------------------------------------------------------- |
+| `lib`          | Anchor entry points and dispatch                                       |
+| `instructions` | Account contexts and operation sequencing                              |
+| `protocol`     | Deterministic hashes, addresses, proof rules and restoration decisions |
+| `runtime`      | Account validation, funding, allocation, serialization and refunds     |
+| `state`        | Persisted shapes and local invariants                                  |
 
-- **HashAccount** records the registered hash value, the description of how that hash was produced, the current voter count, the creation timestamp, and a PDA bump so the account can always be regenerated. Each hash account is funded by the first voter and remains rent exempt while at least one vote exists.
-- **VoteInfo** tracks a single voter’s deposit. It stores the voter public key, the canonical identifier of the hash they support, the lamports locked for rent, and its PDA bump. Removing the vote returns the deposit and may close the related hash when no other voters remain.
+Dependencies flow from `instructions` to `runtime` and `protocol`, and from
+`runtime` to `protocol`/`state`. Runtime does not import instructions; protocol
+does not access live account handles, sysvars, RPC or CPI.
 
-The serialized sizes of these accounts are fixed so that every client can compute the rent-exempt minimum required to create them.
+Handlers show meaningful operations. Put byte manipulation, transfers and account
+mechanics behind the runtime boundary; put value-only rules in protocol modules.
 
-## Hash Sources
+## Repository map
 
-Every hash carries a **HashSource** that explains its origin. The variants are:
+```text
+programs/hash-timestamp/src/
+├── lib.rs                       entry points
+├── error.rs                     public error definitions
+├── telemetry.rs                 optional diagnostic logging
+├── state/
+│   ├── hash_account.rs          hash record and voter-count invariants
+│   ├── hash_source.rs           source variants, generation and allocated size
+│   └── vote_info.rs             refundable witness claim
+├── instructions/                account contexts and handlers
+│   ├── register.rs / account.rs
+│   ├── vote.rs / unvote.rs / verify.rs
+│   ├── branch.rs / batch.rs / pack.rs
+│   └── restore.rs
+├── protocol/
+│   ├── address.rs               canonical IDs, PDAs and signer seeds
+│   ├── hash/
+│   │   ├── branch.rs            child derivation
+│   │   ├── compose.rs           ordered aggregate commitments
+│   │   ├── metadata.rs          account-metadata digest
+│   │   └── snapshot.rs          immutable record values
+│   └── restore/
+│       ├── types.rs             proof wire types
+│       ├── graph.rs             dependencies, reachability and ordering
+│       ├── validate.rs          commitments and historical consistency
+│       └── plan.rs              missing-record decisions
+└── runtime/
+    ├── record_lifecycle.rs      joint hash/vote operations
+    ├── hash_record.rs           live-record validation and creation
+    ├── vote_record.rs           vote validation, funding and release
+    ├── metadata.rs              metadata reads
+    ├── aggregate.rs             ordered member loading
+    ├── vote_migration.rs        parent-vote validation
+    ├── restore/
+    │   ├── accounts.rs          account binding and preflight
+    │   └── execution.rs         prepared creation plan and execution
+    ├── account_io.rs            discriminator-aware serialization
+    ├── pda_account.rs           funding, allocation and assignment
+    └── lamports.rs              checked transfers and closure
 
-- **Hash** – a raw 32-byte payload supplied directly by a user.
-- **Account** – a digest derived from another Solana account’s metadata (public key, owner, lamports, executable flag, rent epoch, length, and contents).
-- **Branch** – a child hash derived from an existing hash, coupled with a payload and an incremented generation.
-- **Batch** – an aggregate that preserves the list of member canonical identifiers.
-- **Pack** – a compact aggregate that skips the member list and retains only fingerprints.
+app/sdk/
+├── hashTimestamp.ts             public entry point
+├── hashUtils.ts                 compatibility utility exports
+├── client.ts                    instruction builders and operation sequences
+├── client/
+│   ├── transactions.ts          signer selection and submission
+│   ├── accounts.ts              account-read compatibility
+│   └── aggregate.ts             member reads and fingerprints
+├── protocol/
+│   ├── normalization.ts         byte, key and numeric conversion
+│   ├── source.ts                source tags, generation and account sizes
+│   ├── hashes.ts                digest framing
+│   └── addresses.ts             PDA derivation
+├── encoding.ts / wire.ts        Anchor encoding and IDL-derived types
+├── restore.ts                   proof encoding and requested-ID selection
+├── rent.ts                      RPC rent estimates
+└── types.ts                     public data contracts
+```
 
-Each variant exposes a discriminator value. The canonical identifier of a hash is computed as `sha256(hash_bytes || discriminator)`, making the address deterministic even when two workflows produce the same raw bytes.
+SDK leaf modules do not import `client` or the public export files.
+`mod.rs` files expose module APIs; generated `target/` files are build outputs.
+For test placement and tooling, see [testing.md](testing.md).
 
-## Program Derived Addresses
+## Instruction pipelines
 
-Hash Timestamp uses predictable PDAs:
+| Instruction      | Sequence                                                                                                      |
+| ---------------- | ------------------------------------------------------------------------------------------------------------- |
+| `register`       | Timestamp raw record → create record and initial vote                                                         |
+| `account`        | Read metadata digest → timestamp → create                                                                     |
+| `batch` / `pack` | Load members → compose → timestamp → create                                                                   |
+| `vote`           | Validate live hash → add funded vote                                                                          |
+| `unvote`         | Validate hash → authenticate vote → release claim                                                             |
+| `branch`         | Validate parent → derive child → validate migration → create child → optionally release old vote              |
+| `restore`        | Bind accounts → parse graph → authenticate anchor → validate accounts → validate commitments → plan → execute |
+| `verify`         | Validate live hash                                                                                            |
 
-- Hash accounts rely on the seed prefix `hash` plus the canonical identifier.
-- Vote accounts rely on the prefix `vote` plus the voter public key and the same canonical identifier.
+Thin Anchor entry points delegate to handlers. The handler itself owns the
+scenario; there is no additional whole-instruction proxy layer.
 
-Reusable helpers inside the program wrap these seeds so that account creation, CPI calls, and closing logic always use the same ordering.
+## Account and effect boundaries
 
-## Lifecycle and Rent
+`Account<T>` holds Anchor-decoded state. A mutable typed account remains the
+authoritative value serialized on exit. `Signer` and `Program<System>`
+establish signer/program constraints.
 
-When a hash is created, the program simultaneously creates its associated vote account. The payer deposits the exact rent minimum for both accounts. Subsequent voters deposit the same minimum when invoking the `vote` instruction. Removing a vote refunds the deposit and decreases the hash’s voter count; if the caller was the last voter, the hash account is closed and the remaining lamports are returned as well.
+`UncheckedAccount` is used where runtime validation is necessary: new or
+prefunded PDAs, optional parent votes, metadata targets and the restore anchor.
+Variable remaining accounts arrive as `AccountInfo` handles.
 
-## Composition Patterns
+- `hash_record` owns live-record loading and validation.
+- `vote_record::validate` accepts typed state; `load_and_validate` decodes
+  dynamic accounts. Both enforce the same identity rules.
+- `RecordWriter` binds the instruction payer and System Program. It creates a
+  hash with its initial vote or adds a funded vote to an existing hash.
+- `ValidatedVote` binds a validated claim to its account. Its consuming
+  `release` operation checks the recipient, decrements the counter and refunds/closes accounts.
 
-The program supports several higher-level flows:
+`state` retains the read-only `HashAccount::verify_account` PDA/bump adapter;
+it does not borrow serialized data or perform CPI.
 
-- **Registration** simply writes a user-provided hash and casts the first vote.
-- **Account hashing** anchors external account metadata so it can be referenced later.
-- **Branching** derives a new hash from an existing one, optionally migrating the caller’s vote to the child hash and incrementing the generation count.
-- **Batching** and **packing** aggregate multiple existing hashes into a single digest; batching keeps the membership list while packing stores only compact fingerprints.
+Ordering protects invariants: metadata is read before funding effects, branch
+creates the child before releasing the parent vote, and restore finishes
+validation/preparation before its first allocation. Transaction atomicity is
+the rollback boundary if a later CPI fails.
 
-Snapshots of existing hash accounts are used when composing new hashes so that derived values remain deterministic and verifiable.
+## Restore ownership
 
-## How Instructions Fit Together
+The [restore handler](../programs/hash-timestamp/src/instructions/restore.rs)
+coordinates three distinct representations:
 
-- **register** creates the first hash and vote for a given payload. It is the entry point for new proofs.
-- **account** produces a hash from arbitrary account metadata, letting teams anchor on-chain state without manual preprocessing.
-- **vote** adds a supporter to an existing hash and ensures the rent deposit is in place. **unvote** removes that support and handles clean-up when hashes become obsolete.
-- **branch** evolves an existing hash while preserving lineage. It can migrate the caller’s vote so the new branch inherits their deposit.
-- **batch** and **pack** prove that multiple prior hashes were considered together, with different trade-offs between transparency and storage.
-- **verify** is a lightweight existence check that lets clients confirm a hash is still live without mutating state.
+1. `ProofGraph` contains proof values and dependency order, with no account handles.
+2. `ValidatedProof` records commitment validity under runtime-supplied facts
+   about existing records. Anchor authentication is a separate earlier handler step.
+3. `RestorePlan` selects missing records; runtime binds those decisions to
+   validated destinations in `RestoreExecution`.
 
-Together these instructions let developers register data, prove when it first gained support, compose more complex structures, and finally retire hashes when they are no longer needed. Clients use the SDK to prepare PDAs, submit transactions, and read back account data so that every proof can be validated off-chain. The shared principles—fixed account sizes, deterministic seeds, and explicit sources—make the project predictable for any integration.**_ End Patch_** End Patch to=functions.apply_patch
+All historical `NewHashRecord` values are prepared before execution.
+`NewHashRecord::historical` preserves the proof timestamp; normal creation
+uses `NewHashRecord::now`.
+
+The internal requested-index set is not a public arbitrary-target API: account
+binding still requires every non-tip parametric pair when materializing records.
+Public proof ordering, full dependency closure, snapshot exceptions and conflicts
+are specified once in the [restore reference](instructions.md#restore).
+
+## Persisted state
+
+`HashAccount` stores `hash`, `source`, `voters`, `created_at` and `bump`.
+`VoteInfo` stores `voter`, canonical `hash_id`, refundable `amount` and `bump`.
+
+Source variants are Hash, Account, Branch, Batch and Pack. Batch additionally
+stores ordered member IDs; Pack does not store membership. Hashes and PDA framing
+are described in the [protocol invariants](instructions.md#core-primitives-and-invariants)
+and implemented in `protocol/hash` and `protocol/address.rs`.
+
+Allocated sizes include compatibility padding:
+
+| State               |                     Space |
+| ------------------- | ------------------------: |
+| Hash or Pack record |                  64 bytes |
+| Account record      |                  96 bytes |
+| Branch record       |                 136 bytes |
+| Batch record        | `64 + 32 × members` bytes |
+| VoteInfo            |                  88 bytes |
+
+These are allocated sizes, not just serialized field lengths; rent calculations
+must use the appropriate account size.
+
+## Compatibility
+
+Instruction signatures, ordered accounts, field/variant layouts, errors, PDA
+seeds, digest framing and allocated sizes are protocol contracts. Internal
+refactoring must preserve them. The reviewed IDL baseline is
+`tests/fixtures/idl-v3.json`; intentional ABI changes require a versioned migration.
+
+See [compatibility gates](testing.md#coverage-and-compatibility-gates) for validation.
