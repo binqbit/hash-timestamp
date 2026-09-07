@@ -1,6 +1,7 @@
 import { PublicKey } from "@solana/web3.js";
 import { canonicalHashId } from "../protocol/hashes";
 import { deriveHashPda } from "../protocol/addresses";
+import { accountPublicKey, to32Bytes } from "../protocol/normalization";
 import {
   ARCHIVE_FORMAT,
   ARCHIVE_VERSION,
@@ -38,23 +39,24 @@ function fields(
 }
 
 function hash(value: unknown, path: string): string {
-  if (typeof value !== "string" || !/^[0-9a-f]{64}$/.test(value))
-    throw new Error(`${path}: expected 32-byte lowercase hex`);
-  return value;
+  if (typeof value === "string") {
+    try {
+      return Buffer.from(to32Bytes(value)).toString("hex");
+    } catch (_) {
+      // Add the archive field path to decoding errors.
+    }
+  }
+  throw new Error(`${path}: expected 32-byte hex or Base58 hash`);
 }
 
 export function archivePublicKey(value: unknown, path = "address"): string {
   if (typeof value !== "string")
-    throw new Error(`${path}: expected base58 public key`);
-  let key: PublicKey;
+    throw new Error(`${path}: expected Base58 or hex public key`);
   try {
-    key = new PublicKey(value);
+    return accountPublicKey(value).toBase58();
   } catch (_) {
     throw new Error(`${path}: invalid public key`);
   }
-  if (key.toBase58() !== value)
-    throw new Error(`${path}: noncanonical public key`);
-  return value;
 }
 
 function integer(value: unknown, signed: boolean, path: string): string {
@@ -222,8 +224,10 @@ export function parseArchive(input: string | unknown): HashArchive {
   if (Object.keys(inputNodes).length > MAX_ARCHIVE_NODES)
     throw new Error("Archive exceeds node limit");
   const nodes: Record<string, ArchiveNode> = {};
-  for (const [pda, value] of Object.entries(inputNodes)) {
-    archivePublicKey(pda, "node PDA");
+  for (const [inputPda, value] of Object.entries(inputNodes)) {
+    const pda = archivePublicKey(inputPda, "node PDA");
+    if (Object.prototype.hasOwnProperty.call(nodes, pda))
+      throw new Error(`Duplicate node PDA: ${pda}`);
     const parsed = node(value, `nodes.${pda}`);
     const kind = { hash: 0, account: 1, branch: 2, batch: 3, pack: 4 }[
       parsed.source.kind

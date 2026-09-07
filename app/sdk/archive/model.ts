@@ -32,6 +32,8 @@ export interface ArchiveNode {
   snapshot?: ArchiveSnapshot;
 }
 
+/** Normalized output uses lowercase hex hashes/IDs and Base58 public keys/PDAs.
+ * Parsers also accept either encoding for fixed32 input strings. */
 export interface HashArchive {
   format: typeof ARCHIVE_FORMAT;
   version: typeof ARCHIVE_VERSION;

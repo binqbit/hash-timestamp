@@ -36,7 +36,7 @@ export function to32Bytes(input: HashBytes): Uint8Array {
     validateByteArray(input);
     buf = Buffer.from(input);
   } else {
-    buf = decodeHex(input);
+    buf = decodeFixed32(input);
   }
   if (buf.length !== 32) throw new Error("hash must be exactly 32 bytes");
   return new Uint8Array(buf);
@@ -156,14 +156,29 @@ export function asU64(value: NumericLike): bigint {
 export function accountPublicKey(input: PublicKey | HashBytes): PublicKey {
   const keyBytes = publicKeyBytes(input);
   if (keyBytes) return new PublicKey(keyBytes);
-  if (typeof input === "string") {
+  return new PublicKey(to32Bytes(input as HashBytes));
+}
+
+/** Encoding is unambiguous only for fixed-size values; arbitrary payloads stay hex. */
+function decodeFixed32(input: string): Buffer {
+  if (typeof input === "string" && /^[0-9a-fA-F]{64}$/.test(input)) {
+    return Buffer.from(input, "hex");
+  }
+  if (
+    typeof input === "string" &&
+    /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(input)
+  ) {
     try {
-      return new PublicKey(input);
+      const key = new PublicKey(input);
+      // Require an exact Base58 round-trip, including leading zero bytes.
+      if (key.toBase58() === input) return key.toBuffer();
     } catch (_) {
-      return new PublicKey(to32Bytes(input));
+      // Report the same input contract for every invalid encoding.
     }
   }
-  return new PublicKey(to32Bytes(input as HashBytes));
+  throw new Error(
+    "expected 32 bytes encoded as 64 hex characters (without 0x) or Base58"
+  );
 }
 
 function decodeHex(input: string): Buffer {

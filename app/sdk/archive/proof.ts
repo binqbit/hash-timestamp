@@ -25,13 +25,16 @@ export function buildRestoreProof(
   const anchor = archivePublicKey(options.anchor);
   const order = dependencyOrder(archive, [anchor]);
   const included = new Set(order),
-    targets = new Set(options.targets);
+    targets = new Set(options.targets.map((pda) => archivePublicKey(pda)));
   if (targets.size !== options.targets.length)
     throw new Error("Duplicate restore targets");
   for (const target of targets)
     if (!included.has(target))
       throw new Error(`Target not reachable from anchor: ${target}`);
-  const existing = new Set([anchor, ...(options.existingAccounts ?? [])]);
+  const existing = new Set([
+    anchor,
+    ...(options.existingAccounts ?? []).map((pda) => archivePublicKey(pda)),
+  ]);
   return [anchor, ...order.filter((pda) => pda !== anchor)].map((pda) => {
     const node = archive.nodes[pda];
     const source = sourceFromArchive(node.source);

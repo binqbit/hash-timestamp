@@ -14,7 +14,8 @@ export const VOTE_INFO_SPACE =
   1 /*bump*/ +
   7; /*padding*/
 
-/** Byte arrays or hexadecimal strings without a `0x` prefix. Hashes/IDs are 32 bytes. */
+/** Byte arrays or encoded strings. Fixed32 hashes/IDs accept hex or Base58;
+ * arbitrary-length payload strings accept hex only. Hex has no `0x` prefix. */
 export type HashBytes = Uint8Array | Buffer | number[] | string;
 /** Prefer bigint or BN for integers outside JavaScript’s safe number range. */
 export type NumericLike = number | bigint | BN;

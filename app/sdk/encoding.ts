@@ -107,11 +107,7 @@ function encodeAccountSnapshot(
   if (!snapshot) {
     return null;
   }
-  const ownerBytes = toBytes(snapshot.owner);
-  if (ownerBytes.length !== 32) {
-    throw new Error("account snapshot owner must be 32 bytes");
-  }
-  const owner = new PublicKey(ownerBytes);
+  const owner = accountPublicKey(snapshot.owner);
   const lamportsBig = toBigInt(snapshot.lamports);
   const rentEpochBig = toBigInt(snapshot.rentEpoch);
   const clampU64 = (value: bigint): bigint => {

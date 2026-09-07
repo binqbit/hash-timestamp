@@ -184,12 +184,16 @@ for parameter variants, existing-record conflicts, nested aggregates and
 
 ## Inputs, encoders and errors
 
-- Hash/ID strings are hexadecimal **without `0x`** and must decode to exactly
-  32 bytes. General byte payloads may have other lengths. Malformed hex,
+- Fixed32 hash/ID strings accept **64 hexadecimal characters without `0x`**
+  (either case) or **Base58** decoding to exactly 32 bytes. Both represent the
+  same bytes and produce identical commitments and addresses. General byte
+  payload strings (`toBytes`, Restore Hash `params.payload`)
+  remain **hex-only**, with arbitrary lengths; byte arrays also work. Malformed hex,
   incomplete byte pairs, sparse arrays and non-integer/out-of-range bytes are
   rejected rather than silently truncated or wrapped.
 - Account-source identities accept `PublicKey`, bytes, hex and base58.
-  Prefer `PublicKey` for account identities; hash strings are never base58.
+  Prefer `PublicKey` for account identities. Archive parsing/export normalizes
+  hashes and canonical IDs to lowercase hex, and public keys/PDAs to Base58.
 - Use `bigint` or `BN` for exact large integers. Timestamps must fit signed
   i64 and generations unsigned u64. JavaScript numbers already rounded before
   reaching the SDK cannot be recovered.

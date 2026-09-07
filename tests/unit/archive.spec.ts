@@ -23,6 +23,80 @@ import { deriveAccountSnapshotHash } from "../../app/sdk/protocol/hashes";
 import { MAX_ARCHIVE_BYTES } from "../../app/sdk/archive/codec";
 
 describe("portable archive format", () => {
+  it("normalizes mixed encodings to hex hashes and Base58 public keys", () => {
+    const { archive } = archiveFixture();
+    const input = parseArchive(archive);
+    const base58 = (hash: string) =>
+      new PublicKey(Buffer.from(hash, "hex")).toBase58();
+    const keyHex = (key: string) => hex(new PublicKey(key).toBytes());
+    input.programId = keyHex(input.programId);
+    input.nodes = Object.fromEntries(
+      Object.entries(input.nodes).map(([pda, node]) => {
+        node.hash = base58(node.hash);
+        if (node.source.kind === "branch") {
+          node.source.previousHashId = base58(node.source.previousHashId);
+          node.source.payload = node.source.payload.toUpperCase();
+        }
+        if (node.source.kind === "batch")
+          node.source.members = node.source.members.map(base58);
+        if (node.source.kind === "account")
+          node.source.account = keyHex(node.source.account);
+        if (node.members) node.members = node.members.map(keyHex);
+        if (node.snapshot) node.snapshot.owner = keyHex(node.snapshot.owner);
+        return [keyHex(pda), node];
+      })
+    );
+    expect(parseArchive(JSON.stringify(input))).to.deep.equal(archive);
+    expect(stringifyArchive(input)).to.equal(stringifyArchive(archive));
+    expect(mergeArchives(archive, input)).to.deep.equal(archive);
+  });
+
+  it("rejects duplicate node and member aliases after normalization", () => {
+    const { archive, pdas } = archiveFixture();
+    const duplicate = parseArchive(archive);
+    duplicate.nodes[hex(new PublicKey(pdas.hash).toBytes())] =
+      duplicate.nodes[pdas.hash];
+    expect(() => parseArchive(duplicate)).to.throw("Duplicate node PDA");
+    const pack = parseArchive(archive);
+    pack.nodes[pdas.pack].members!.push(
+      hex(new PublicKey(pdas.hash).toBytes())
+    );
+    expect(() => parseArchive(pack)).to.throw("duplicate members");
+    const batch = archive.nodes[pdas.batch].source;
+    if (batch.kind !== "batch") throw new Error("fixture");
+    batch.members.push(
+      new PublicKey(Buffer.from(batch.members[0], "hex")).toBase58()
+    );
+    expect(() => parseArchive(archive)).to.throw("duplicate members");
+  });
+
+  it("normalizes PDA selectors and restore targets without changing their meaning", () => {
+    const { archive, pdas } = archiveFixture();
+    const keyHex = (key: string) => hex(new PublicKey(key).toBytes());
+    expect(selectArchive(archive, [keyHex(pdas.branch)])).to.deep.equal(
+      selectArchive(archive, [pdas.branch])
+    );
+    expect(
+      buildRestoreProof(archive, {
+        anchor: keyHex(pdas.pack),
+        targets: [keyHex(pdas.hash)],
+        existingAccounts: [keyHex(pdas.account)],
+      })
+    ).to.deep.equal(
+      buildRestoreProof(archive, {
+        anchor: pdas.pack,
+        targets: [pdas.hash],
+        existingAccounts: [pdas.account],
+      })
+    );
+    expect(() =>
+      buildRestoreProof(archive, {
+        anchor: pdas.pack,
+        targets: [pdas.hash, keyHex(pdas.hash)],
+      })
+    ).to.throw("Duplicate restore targets");
+  });
+
   it("keeps the complete documented JSON example valid and byte-derivable", () => {
     expect(
       parseArchive(readFileSync("examples/archive.json", "utf8"))
@@ -128,9 +202,6 @@ describe("portable archive format", () => {
     },
     (a: any, p: any) => {
       a.nodes[p.hash].createdAt = "9223372036854775808";
-    },
-    (a: any, p: any) => {
-      a.nodes[p.hash].hash = a.nodes[p.hash].hash.toUpperCase();
     },
     (a: any, p: any) => {
       a.nodes[p.hash].members = [p.account];

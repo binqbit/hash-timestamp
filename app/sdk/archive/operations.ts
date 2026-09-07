@@ -5,7 +5,7 @@ import { canonicalHashId } from "../protocol/hashes";
 import { deriveHashPda } from "../protocol/addresses";
 import { hashSourceKindOf } from "../protocol/source";
 import { toBytes } from "../protocol/normalization";
-import { createArchive, parseArchive } from "./codec";
+import { archivePublicKey, createArchive, parseArchive } from "./codec";
 import { dependencyOrder, inspectArchiveGraph } from "./graph";
 import { ArchiveNode, HashArchive } from "./model";
 import { archiveHex, archiveSnapshot, archiveSource } from "./values";
@@ -70,7 +70,10 @@ export function selectArchive(
   includeDependencies = true
 ): HashArchive {
   const archive = parseArchive(input);
-  const ids = includeDependencies ? dependencyOrder(archive, pdas) : pdas;
+  const addresses = pdas.map((pda) => archivePublicKey(pda));
+  const ids = includeDependencies
+    ? dependencyOrder(archive, addresses)
+    : addresses;
   const result = createArchive(archive.programId);
   for (const pda of ids) {
     if (!archive.nodes[pda]) throw new Error(`Unknown archive node: ${pda}`);

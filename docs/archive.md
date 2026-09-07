@@ -44,7 +44,12 @@ and `data`. Owner/target are base58 public keys, data is an array of integer byt
 and executable is a boolean. This is the original committed target snapshot, not
 a later RPC snapshot or the HashAccount's own lamports/data.
 
-- Hashes and canonical IDs are 64-character lowercase hexadecimal without `0x`.
+- Normalized hashes and canonical IDs are 64-character lowercase hexadecimal
+  without `0x`; public keys and PDA node keys/references are Base58. Parsing accepts
+  either encoding for these 32-byte strings (including uppercase hex), then
+  normalizes by field type before validation, merging and export. Duplicate node
+  keys or members remain invalid even when written in different encodings.
+  PDA selectors and restore targets also accept either encoding.
 - `createdAt` is a nonzero signed i64 decimal **string**. `generation`, snapshot
   `lamports` and `rentEpoch` are unsigned u64 decimal strings. Branch generation
   must be positive. No numeric rounding, leading zeros or clamping is accepted.

@@ -17,6 +17,46 @@ const hash = new Uint8Array(32).fill(17);
 const fingerprint = { hash, sourceKind: 0, createdAt: 123n, generation: 0n };
 
 describe("SDK input boundaries", () => {
+  it("normalizes hex and Base58 hashes without changing their bytes or IDs", () => {
+    for (const bytes of [
+      new Uint8Array(32),
+      hash,
+      new Uint8Array(32).fill(255),
+      new Uint8Array([0, ...hash.slice(1)]),
+    ]) {
+      const hex = Buffer.from(bytes).toString("hex");
+      const base58 = new PublicKey(bytes).toBase58();
+      for (const input of [hex, hex.toUpperCase(), base58]) {
+        expect(to32Bytes(input)).to.deep.equal(bytes);
+        expect(canonicalHashId(input, 0)).to.deep.equal(
+          canonicalHashId(bytes, 0)
+        );
+      }
+    }
+    // A Base58 string can contain only hex characters without being a hex digest.
+    expect(to32Bytes("a".repeat(43))).to.deep.equal(
+      new PublicKey("a".repeat(43)).toBytes()
+    );
+    expect(toBytes("abcd")).to.deep.equal(new Uint8Array([171, 205]));
+  });
+
+  it("rejects invalid or non-32-byte encoded hashes", () => {
+    for (const input of [
+      "",
+      "2",
+      "1".repeat(31),
+      "1".repeat(33),
+      "z".repeat(44),
+      "1".repeat(31) + "0",
+      "1".repeat(31) + "O",
+      "1".repeat(31) + "I",
+      "1".repeat(31) + "l",
+      "0x" + "ab".repeat(32),
+    ]) {
+      expect(() => to32Bytes(input), input).to.throw();
+    }
+  });
+
   it("rejects non-integer and unknown source kinds at every digest boundary", () => {
     for (const kind of [NaN, Infinity, -1, 1.5, 5, 256]) {
       const calls = [
@@ -107,6 +147,44 @@ describe("SDK input boundaries", () => {
         account: foreign,
       }).account.account.equals(key)
     ).to.equal(true);
+  });
+
+  it("encodes snapshot owners consistently as keys in either string format", () => {
+    const key = new PublicKey(hash);
+    for (const owner of [
+      key,
+      hash,
+      [...hash],
+      key.toBase58(),
+      Buffer.from(hash).toString("hex"),
+    ]) {
+      const encoded = encodeRestoreParameters({
+        kind: "account",
+        snapshot: {
+          owner,
+          lamports: 1n,
+          rentEpoch: 0n,
+          executable: false,
+          data: [171, 205],
+        },
+      });
+      expect(encoded.account.snapshot!.owner.equals(key)).to.equal(true);
+      expect(encoded.account.snapshot!.data).to.deep.equal(
+        Buffer.from([171, 205])
+      );
+    }
+    expect(() =>
+      encodeRestoreParameters({
+        kind: "account",
+        snapshot: {
+          owner: "2",
+          lamports: 1n,
+          rentEpoch: 0n,
+          executable: false,
+          data: [],
+        },
+      })
+    ).to.throw();
   });
 
   it("rejects truncated hexadecimal input instead of accepting a different byte string", () => {
