@@ -31,7 +31,12 @@ planning funding rather than treating a cached value as permanent.
 
 ## Retain recovery data
 
-Persist the information needed to build a complete `RestoreProofInput[]`:
+Prefer the [SDK archive format](archive.md): each creation returns one node,
+which the application persists and merges with earlier receipts. The SDK derives
+fingerprints and Restore parameters from those nodes without duplicating them in
+the file. Keep transaction signatures separately from the archive.
+
+For custom low-level `RestoreProofInput[]` storage, retain:
 
 - raw hashes, canonical IDs and full sources;
 - exact historical timestamps and generations;
@@ -59,6 +64,9 @@ materialization restrictions.
   account or wallet. Failed program effects roll back, but execution fees remain charged.
 - **RPC/transport failure:** preserve the original error. If submission status
   is uncertain, check the signature and resulting state before resubmitting.
+- **Archive capture failure:** `ArchiveCaptureError` means creation was already
+  submitted; retain its signature/pending node and check status. A multi-step
+  `ArchiveRestoreExecutionError` similarly retains earlier completed receipts.
 
 Use structured Anchor errors where available; SDK validation and transport
 errors are distinct. Error decoding is shown in the [SDK guide](sdk.md#inputs-encoders-and-errors);

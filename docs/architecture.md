@@ -69,7 +69,17 @@ app/sdk/
 ├── client/
 │   ├── transactions.ts          signer selection and submission
 │   ├── accounts.ts              account-read compatibility
-│   └── aggregate.ts             member reads and fingerprints
+│   ├── aggregate.ts             member reads and fingerprints
+│   ├── archive.ts               validated chain reads and creation receipts
+│   ├── archive-candidate.ts     account pairs and size-checked instructions
+│   └── archive-restore.ts       live planning, transaction sizing and execution
+├── archive.ts                   public portable-archive exports
+├── archive/
+│   ├── model.ts / planning.ts   JSON and plan/result contracts
+│   ├── codec.ts                 strict versioned JSON validation
+│   ├── values.ts / graph.ts     conversions, dependencies and commitments
+│   ├── operations.ts            immutable merge, selection and legacy import
+│   └── proof.ts                 pure complete-proof compilation
 ├── protocol/
 │   ├── normalization.ts         byte, key and numeric conversion
 │   ├── source.ts                source tags, generation and account sizes
@@ -82,6 +92,9 @@ app/sdk/
 ```
 
 SDK leaf modules do not import `client` or the public export files.
+Archive value modules never perform RPC, signing or filesystem writes. The client
+owns live-state checks and keeps prepared instructions separate from mutable plan
+display data. The [archive guide](archive.md) specifies the public behavior.
 `mod.rs` files expose module APIs; generated `target/` files are build outputs.
 For test placement and tooling, see [testing.md](testing.md).
 

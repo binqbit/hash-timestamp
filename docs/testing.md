@@ -110,6 +110,11 @@ and skipped/pending tests fail the normal commands. Integration cases have a
 - Rust/SDK vectors and real Anchor Borsh round trips cover hashes, source tags,
   PDA seeds, account layouts and wire encoding.
 - SDK tests cover inputs, exact integers, signing, RPC adapters, aggregates and restore builders.
+- Archive unit tests cover strict JSON/merge rules, the documented example, nested
+  graph selection, fake-RPC live-state checks, real Anchor instruction sizing,
+  creation receipts and partial-execution errors. They require no running RPC node.
+- `tests/integration/archive.spec.ts` exercises archived Branch/Batch/Pack recovery
+  and historical timestamps against the disposable local validator.
 - Restore tests cover graph structure, commitments, historical timestamps and snapshots.
 - Runtime/integration tests cover ownership, prefunding, refunds, counters and rollback.
 - `check:architecture` checks layer dependencies and handler/SDK boundaries.

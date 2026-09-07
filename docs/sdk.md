@@ -34,12 +34,13 @@ export async function timestampFile(
   const fileHash = createHash("sha256").update(fileBytes).digest();
   const hashId = deriveGenesisHashId(fileHash);
 
-  const signature = await client.register(fileHash);
+  const { signature, archive } = await client.register(fileHash);
   const record = await client.fetchHashAccount(hashId);
   if (!record) throw new Error("Hash record was not found");
 
   return {
     signature,
+    archive,
     hashId,
     address: client.hashPda(hashId),
     createdAt: record.createdAt.toString(),
@@ -79,20 +80,27 @@ Except for `verify`, transaction methods accept an optional instruction payer
 `Keypair`; omission uses the provider wallet. All results below are promises,
 except the PDA methods.
 
-| Method                                               | Work                                   | Result                                                   |
-| ---------------------------------------------------- | -------------------------------------- | -------------------------------------------------------- |
-| `hashPda(hashId)`, `votePda(hashId, voter)`          | Local derivation only                  | `PublicKey`                                              |
-| `fetchHashAccount(hashId)`                           | RPC read                               | `HashAccountData \| null`                                |
-| `fetchVoteInfo(hashId, voter)`                       | RPC read                               | `VoteInfoData \| null`                                   |
-| `register(hash, payer?)`                             | Transaction                            | Signature string                                         |
-| `vote(hashId, payer?)`                               | Transaction                            | Signature string                                         |
-| `unvote(hashId, payer?)`                             | Transaction                            | Signature string                                         |
-| `verify(hashId)`                                     | Transaction, not a local check         | Signature string                                         |
-| `branch(parentId, payload, takeVote = true, payer?)` | Parent RPC read + transaction          | Signature string                                         |
-| `batch(memberIds, payer?)`                           | Ordered member RPC reads + transaction | `BatchResult: { signature, batchId }`                    |
-| `pack(memberIds, payer?)`                            | Ordered member RPC reads + transaction | `PackResult: { signature, packId }`                      |
-| `hashAccount(targetPublicKey, payer?)`               | Target RPC read + transaction          | `AccountHashResult: { signature, hashId, metadataHash }` |
-| `restore(proof, optionsOrPayer?, payer?)`            | Transaction                            | `RestoreResult: { signature, restoredIds }`              |
+| Method                                               | Work                                 | Result                                         |
+| ---------------------------------------------------- | ------------------------------------ | ---------------------------------------------- |
+| `hashPda(hashId)`, `votePda(hashId, voter)`          | Local derivation only                | `PublicKey`                                    |
+| `fetchHashAccount(hashId)`                           | RPC read                             | `HashAccountData \| null`                      |
+| `fetchVoteInfo(hashId, voter)`                       | RPC read                             | `VoteInfoData \| null`                         |
+| `register(hash, payer?)`                             | Transaction + archive capture        | `{ signature, archive }`                       |
+| `vote(hashId, payer?)`                               | Transaction                          | Signature string                               |
+| `unvote(hashId, payer?)`                             | Transaction                          | Signature string                               |
+| `verify(hashId)`                                     | Transaction, not a local check       | Signature string                               |
+| `branch(parentId, payload, takeVote = true, payer?)` | Parent read + transaction + capture  | `{ signature, archive }`                       |
+| `batch(memberIds, payer?)`                           | Member reads + transaction + capture | `{ signature, batchId, archive }`              |
+| `pack(memberIds, payer?)`                            | Member reads + transaction + capture | `{ signature, packId, archive }`               |
+| `hashAccount(targetPublicKey, payer?)`               | Target read + transaction + capture  | `{ signature, hashId, metadataHash, archive }` |
+| `restore(proof, optionsOrPayer?, payer?)`            | Transaction                          | `RestoreResult: { signature, restoredIds }`    |
+| `planRestore(archive, options, payer?)`              | Read-only RPC preflight              | `ArchiveRestorePlan`                           |
+| `executeRestorePlan(plan, options?, payer?)`         | Execute prepared transactions        | `{ signatures, archive }`                      |
+| `restoreArchive(archive, options, payer?)`           | Plan and execute                     | `{ signatures, archive }`                      |
+
+Each creation archive contains exactly one new node. The [archive guide](archive.md)
+defines its versioned JSON format, immutable merge APIs, target selection and
+receipt-aware errors. `register`/`branch` callers must now destructure `signature`.
 
 Fetch methods return **raw Anchor account data**: integer fields such as
 `createdAt`, `voters` and vote `amount` remain `BN`; `source` remains the
@@ -114,8 +122,10 @@ await client.register(otherFileHash, keypair); // explicit instruction signer
 An explicit `payer` selects the instruction signer/rent payer and is passed to
 Anchor's `.signers([payer])`. It does not replace the configured provider wallet.
 With the normal Anchor provider, the provider wallet still pays transaction fees.
-Fund both roles as appropriate. The SDK delegates submission and confirmation
-policy to the supplied provider; it does not add retries or rebuild transactions.
+Fund both roles as appropriate. Submission uses the supplied provider. Creation
+receipt capture additionally confirms at `confirmed`; archive-plan execution
+requests `confirmed` from the provider. Other methods retain provider policy.
+The SDK does not automatically retry submitted transactions.
 
 `rentExemptForHash(connection, source)` and `rentExemptForVote(connection)`
 estimate account rent through that connection. They are not total transaction
@@ -164,8 +174,11 @@ await client.restore(proof, { createAccounts: false }, payer);
   An optional instruction payer can be supplied as the second argument, or
   as the third argument after options.
 
-The caller supplies the history; the SDK neither discovers it nor splits large
-proofs across transactions. See the [restore reference](instructions.md#restore)
+This low-level method takes caller-prepared history and does not split proofs.
+For selection from a JSON archive and transaction-sized planning, use
+[archive restoration](archive.md#plan-review-execute). It also requires retained
+history; it does not recover missing off-chain information from an RPC node.
+See the [restore reference](instructions.md#restore)
 for parameter variants, existing-record conflicts, nested aggregates and
 [recovery limits](instructions.md#recovery-limits).
 
@@ -188,8 +201,9 @@ for parameter variants, existing-record conflicts, nested aggregates and
 
 Public wire adapters are `decodeHashSource`, `encodeHashSource` and
 `encodeRestoreParameters`. Their encoded types come from the generated IDL.
-Complete-proof preparation and fingerprint encoding are internal, not separately
-exported utilities. Other public helpers derive hashes/IDs/PDAs and account sizes.
+Low-level wire preparation (`prepareRestore`) and fingerprint encoding are
+internal. The archive's `buildRestoreProof` compiler is public. Other public
+helpers derive hashes/IDs/PDAs and account sizes.
 Use `client.program` for lower-level Anchor builders or custom account sets.
 
 Client prechecks throw ordinary errors, for example

@@ -15,6 +15,8 @@ examples and automated tests.
   when their final vote is withdrawn.
 - **Historical recovery:** validate retained proofs and recreate missing records
   with their proven historical timestamps.
+- **Portable archives:** retain a versioned JSON graph, merge creation receipts
+  and let the SDK plan restoration from selected nodes.
 
 The program stores hash records, not file contents. File hashing happens in the
 application. Recovery requires retained proof data and a live anchor; the detailed
@@ -57,6 +59,8 @@ Choose the guide for the task at hand:
 - [Instructions](docs/instructions.md) — what each operation does, its account
   requirements, guarantees and errors.
 - [SDK](docs/sdk.md) — client construction, inputs, return values and signing.
+- [Archive format](docs/archive.md) — JSON nodes, merging, creation receipts and
+  automatic restore planning.
 - [Application integration](docs/api.md) — transaction coordination, state
   handling and proof persistence.
 - [Architecture](docs/architecture.md) — module boundaries, data ownership and
