@@ -100,6 +100,17 @@ describe("SDK module compatibility", () => {
         "HashSourceKind",
         "HashTimestampClient",
         "RestoreApi",
+        "ARCHIVE_FORMAT",
+        "ARCHIVE_VERSION",
+        "createArchive",
+        "parseArchive",
+        "stringifyArchive",
+        "inspectArchive",
+        "mergeArchives",
+        "addArchiveNode",
+        "selectArchive",
+        "archiveFromProof",
+        "buildRestoreProof",
       ].sort()
     );
     const leaves: any = {

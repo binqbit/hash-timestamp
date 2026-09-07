@@ -7,12 +7,15 @@ import {
   HashSourceKind,
   NumericLike,
   PackMemberInput,
+  RestoreAccountSnapshotInput,
 } from "../types";
 import {
   numberToU64,
   to32Bytes,
   toI64Bytes,
   toU64Bytes,
+  accountPublicKey,
+  toBytes,
 } from "./normalization";
 import { hashSourceKindOf } from "./source";
 
@@ -64,6 +67,21 @@ export function deriveAccountHashId(
 ): Uint8Array {
   const metadataHash = deriveAccountMetadataHash(account, info);
   return canonicalHashId(metadataHash, HashSourceKind.Account);
+}
+
+/** Exact historical snapshot framing, without conversion through RPC number fields. */
+export function deriveAccountSnapshotHash(
+  account: PublicKey | HashBytes,
+  snapshot: RestoreAccountSnapshotInput
+): Uint8Array {
+  const hasher = createHash("sha256");
+  hasher.update(accountPublicKey(account).toBuffer());
+  hasher.update(accountPublicKey(snapshot.owner).toBuffer());
+  hasher.update(toU64Bytes(snapshot.lamports));
+  hasher.update(toBoolByte(snapshot.executable));
+  hasher.update(toU64Bytes(snapshot.rentEpoch));
+  hasher.update(toBytes(snapshot.data));
+  return new Uint8Array(hasher.digest());
 }
 
 export function deriveBranchHash(

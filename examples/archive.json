@@ -1,0 +1,78 @@
+{
+  "format": "hash-timestamp-archive",
+  "version": 1,
+  "programId": "HTSx1wheA1TnHSEbKWxmtXKgJNyRfF3QxeK2hHQcJ9pN",
+  "nodes": {
+    "2mHv4cQ7NoD29p5MuqxQQMegsakGRSDCnqhTVQQrJuQ1": {
+      "hash": "71b479ef2226212513dd009f5ff09f08cb1531af18af937260f2e2d1957dd89a",
+      "createdAt": "140",
+      "source": {
+        "kind": "pack"
+      },
+      "members": [
+        "CbXPHvEfWA2VMRSZHyUCZiPDywtAXxft4v2HPjEsnqot",
+        "EHKpCNQz3DaVGCzWvynCAxjGfZGC4gfJMgDHCXRbvGfC"
+      ]
+    },
+    "6cXh645qanvvSFzDJYg6SYcYjNrtYHRkchgnC64vQSjg": {
+      "hash": "a43edfcd927d5b6f59300e7dae0dc5a2cf022e82c06d4523379bd4d03381de3f",
+      "createdAt": "130",
+      "source": {
+        "kind": "branch",
+        "previousHashId": "d47501117da335eb08a7353dedb10919476e9a82d21fd26a240820e26a4d5e80",
+        "payload": "97380187a878903ffe722b7bfd8d8ba92457ef77de0216cfe9261c72c2b87397",
+        "generation": "2"
+      }
+    },
+    "C7CBre59RPKJVc1GzC8tZnyhqihmvKRiJUCYQVrEAQzy": {
+      "hash": "6ed58b3889beab9298f70c715d2759fadbe99e0bf215d3a363097d1dfbfd9c35",
+      "createdAt": "120",
+      "source": {
+        "kind": "branch",
+        "previousHashId": "9c22d006797208b9b55823c03eaaeee32a7b494d5be50a58bbd4060771fe5576",
+        "payload": "f38c764c8aa00b6578f4254a4dc6d9b50f88fa926e270ea7859bd1b707cd8662",
+        "generation": "1"
+      }
+    },
+    "CbXPHvEfWA2VMRSZHyUCZiPDywtAXxft4v2HPjEsnqot": {
+      "hash": "2c8461f31d3218f87e3cff742eb7a5d56235d9205528cd7c67f0567c41ebf56b",
+      "createdAt": "100",
+      "source": {
+        "kind": "hash"
+      }
+    },
+    "DA6fbEzs3QSJLDBetaMQ7Hs9LNVkhaBf2LFwFaZu9vH9": {
+      "hash": "c2703a7ddf6c74b39505339af20dd6dd4f0794720e038b78ba395600c72417d4",
+      "createdAt": "105",
+      "source": {
+        "kind": "hash"
+      }
+    },
+    "EHKpCNQz3DaVGCzWvynCAxjGfZGC4gfJMgDHCXRbvGfC": {
+      "hash": "484d875ac16ba35497bad0c47b1b5930fbc3b7b09320345991d25ff4bd0d34a6",
+      "createdAt": "110",
+      "source": {
+        "kind": "account",
+        "account": "4YRviz3wB9fsTLWQEidMx3VtAz8EJsNoQJyrX6DoPhp7"
+      },
+      "snapshot": {
+        "owner": "11111111111111111111111111111111",
+        "lamports": "18446744073709551615",
+        "executable": false,
+        "rentEpoch": "0",
+        "data": [1, 2, 3]
+      }
+    },
+    "NsMWmsoX1iieL8Pa63CoFaCBfMJ9XCQdcKQj636QXiZ": {
+      "hash": "0b1ebb1d4ef535bdc434d3771a62dafc3485ecbc87b6b2d3fd1703edf8c783d0",
+      "createdAt": "150",
+      "source": {
+        "kind": "batch",
+        "members": [
+          "d47501117da335eb08a7353dedb10919476e9a82d21fd26a240820e26a4d5e80",
+          "29d6229c5537447d75b278c93a944f467350048a18c5b1d90a5296ef2e34d3fb"
+        ]
+      }
+    }
+  }
+}
