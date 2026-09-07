@@ -1,0 +1,840 @@
+{
+  "address": "HTSx1wheA1TnHSEbKWxmtXKgJNyRfF3QxeK2hHQcJ9pN",
+  "metadata": {
+    "name": "hash_timestamp",
+    "version": "3.0.0",
+    "spec": "0.1.0",
+    "description": "A smart contract that fixes the timestamp of a hash"
+  },
+  "instructions": [
+    {
+      "name": "account",
+      "docs": [
+        "Produce a hash account from an arbitrary account's metadata."
+      ],
+      "discriminator": [
+        230,
+        102,
+        8,
+        168,
+        140,
+        61,
+        32,
+        127
+      ],
+      "accounts": [
+        {
+          "name": "hash_account",
+          "writable": true
+        },
+        {
+          "name": "vote_info",
+          "writable": true
+        },
+        {
+          "name": "target"
+        },
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "batch",
+      "docs": [
+        "Create a batch hash that aggregates several existing hashes."
+      ],
+      "discriminator": [
+        198,
+        211,
+        248,
+        40,
+        165,
+        37,
+        21,
+        148
+      ],
+      "accounts": [
+        {
+          "name": "hash_account",
+          "writable": true
+        },
+        {
+          "name": "vote_info",
+          "writable": true
+        },
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "branch",
+      "docs": [
+        "Derive a new hash from an existing one and optionally migrate the caller's vote."
+      ],
+      "discriminator": [
+        237,
+        91,
+        193,
+        5,
+        169,
+        135,
+        27,
+        32
+      ],
+      "accounts": [
+        {
+          "name": "hash_account",
+          "writable": true
+        },
+        {
+          "name": "vote_info",
+          "writable": true
+        },
+        {
+          "name": "new_hash_account",
+          "writable": true
+        },
+        {
+          "name": "new_vote_info",
+          "writable": true
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "payload",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "take_vote",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "pack",
+      "docs": [
+        "Pack existing hash accounts into a minimal composite hash."
+      ],
+      "discriminator": [
+        224,
+        88,
+        97,
+        43,
+        148,
+        12,
+        19,
+        225
+      ],
+      "accounts": [
+        {
+          "name": "hash_account",
+          "writable": true
+        },
+        {
+          "name": "vote_info",
+          "writable": true
+        },
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "register",
+      "docs": [
+        "Register a new hash account with the given hash payload."
+      ],
+      "discriminator": [
+        211,
+        124,
+        67,
+        15,
+        211,
+        194,
+        178,
+        240
+      ],
+      "accounts": [
+        {
+          "name": "hash_account",
+          "writable": true
+        },
+        {
+          "name": "vote_info",
+          "writable": true
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "hash",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "restore",
+      "docs": [
+        "Restore previously existing hashes by proving ancestry from a known chain tip."
+      ],
+      "discriminator": [
+        77,
+        37,
+        122,
+        128,
+        139,
+        35,
+        6,
+        58
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "anchor_hash_account",
+          "docs": [
+            "Verified inside `restore_from_chain`."
+          ]
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "proof_chain",
+          "type": {
+            "vec": {
+              "defined": {
+                "name": "RestoreProofLink"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "unvote",
+      "docs": [
+        "Remove caller's vote and withdraw their deposit; auto-close if zero voters remain."
+      ],
+      "discriminator": [
+        181,
+        169,
+        220,
+        24,
+        207,
+        114,
+        148,
+        223
+      ],
+      "accounts": [
+        {
+          "name": "hash_account",
+          "writable": true
+        },
+        {
+          "name": "vote_info",
+          "writable": true
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "verify",
+      "docs": [
+        "Verify the integrity and authenticity of a hash account."
+      ],
+      "discriminator": [
+        133,
+        161,
+        141,
+        48,
+        120,
+        198,
+        88,
+        150
+      ],
+      "accounts": [
+        {
+          "name": "hash_account"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "vote",
+      "docs": [
+        "Vote for a hash and deposit exactly the rent-exempt minimum for this account size."
+      ],
+      "discriminator": [
+        227,
+        110,
+        155,
+        23,
+        136,
+        126,
+        172,
+        25
+      ],
+      "accounts": [
+        {
+          "name": "hash_account",
+          "writable": true
+        },
+        {
+          "name": "vote_info",
+          "writable": true
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    }
+  ],
+  "accounts": [
+    {
+      "name": "HashAccount",
+      "discriminator": [
+        14,
+        115,
+        101,
+        24,
+        84,
+        2,
+        196,
+        212
+      ]
+    },
+    {
+      "name": "VoteInfo",
+      "discriminator": [
+        53,
+        111,
+        174,
+        160,
+        168,
+        16,
+        248,
+        186
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "HashNotFound",
+      "msg": "Hash not found"
+    },
+    {
+      "code": 6001,
+      "name": "InvalidHashSeeds",
+      "msg": "Invalid hash PDA seeds"
+    },
+    {
+      "code": 6002,
+      "name": "AlreadyVoted",
+      "msg": "Already voted for this hash"
+    },
+    {
+      "code": 6003,
+      "name": "NotVoter",
+      "msg": "Caller is not the voter"
+    },
+    {
+      "code": 6004,
+      "name": "VotesNotZero",
+      "msg": "Votes are not zero"
+    },
+    {
+      "code": 6005,
+      "name": "DerivedHashMismatch",
+      "msg": "Derived hash mismatch"
+    },
+    {
+      "code": 6006,
+      "name": "VoteAccountMissing",
+      "msg": "Expected vote account for migration"
+    },
+    {
+      "code": 6007,
+      "name": "NoVoteToMigrate",
+      "msg": "Vote migration requested but no vote exists"
+    },
+    {
+      "code": 6008,
+      "name": "GenerationOverflow",
+      "msg": "Hash generation overflowed"
+    },
+    {
+      "code": 6009,
+      "name": "HashAlreadyExists",
+      "msg": "Hash already exists"
+    },
+    {
+      "code": 6010,
+      "name": "BatchMembersEmpty",
+      "msg": "Batch requires at least one member"
+    },
+    {
+      "code": 6011,
+      "name": "BatchMemberWrongProgram",
+      "msg": "Batch member account not owned by the program"
+    },
+    {
+      "code": 6012,
+      "name": "PackMembersEmpty",
+      "msg": "Pack requires at least one member"
+    },
+    {
+      "code": 6013,
+      "name": "PackMemberWrongProgram",
+      "msg": "Pack member account not owned by the program"
+    },
+    {
+      "code": 6014,
+      "name": "RestoreChainTooShort",
+      "msg": "Restore proof cannot be empty"
+    },
+    {
+      "code": 6015,
+      "name": "RestoreProofDuplicate",
+      "msg": "Restore proof contains duplicate canonical IDs"
+    },
+    {
+      "code": 6016,
+      "name": "RestoreDependencyMissing",
+      "msg": "Restore proof references a missing dependency"
+    },
+    {
+      "code": 6017,
+      "name": "RestorePackMembersMissing",
+      "msg": "Restore pack proof missing member list"
+    },
+    {
+      "code": 6018,
+      "name": "RestoreHashPayloadMissing",
+      "msg": "Restore hash proof missing original payload"
+    },
+    {
+      "code": 6019,
+      "name": "RestoreAccountSnapshotMissing",
+      "msg": "Restore account snapshot required to recreate account hash"
+    },
+    {
+      "code": 6020,
+      "name": "RestoreTipMismatch",
+      "msg": "Restore tip proof does not match the current hash account"
+    },
+    {
+      "code": 6021,
+      "name": "RestoreProofMismatch",
+      "msg": "Restore proof data is inconsistent"
+    },
+    {
+      "code": 6022,
+      "name": "RestoreTimestampMismatch",
+      "msg": "Restore proof timestamp mismatch"
+    },
+    {
+      "code": 6023,
+      "name": "RestoreGenerationMismatch",
+      "msg": "Restore proof generation mismatch"
+    },
+    {
+      "code": 6024,
+      "name": "RestoreAccountsMisaligned",
+      "msg": "Restore remaining accounts must be hash/vote pairs"
+    },
+    {
+      "code": 6025,
+      "name": "InvalidPdaPlaceholder",
+      "msg": "PDA placeholder must be an empty, non-executable system account"
+    },
+    {
+      "code": 6026,
+      "name": "BatchMemberDuplicate",
+      "msg": "Batch contains a duplicate member"
+    },
+    {
+      "code": 6027,
+      "name": "PackMemberDuplicate",
+      "msg": "Pack contains a duplicate member"
+    }
+  ],
+  "types": [
+    {
+      "name": "HashAccount",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "source",
+            "type": {
+              "defined": {
+                "name": "HashSource"
+              }
+            }
+          },
+          {
+            "name": "voters",
+            "type": "u64"
+          },
+          {
+            "name": "created_at",
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "HashSource",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Hash"
+          },
+          {
+            "name": "Account",
+            "fields": [
+              {
+                "name": "account",
+                "type": "pubkey"
+              }
+            ]
+          },
+          {
+            "name": "Branch",
+            "fields": [
+              {
+                "name": "previous_hash_id",
+                "type": {
+                  "array": [
+                    "u8",
+                    32
+                  ]
+                }
+              },
+              {
+                "name": "payload",
+                "type": {
+                  "array": [
+                    "u8",
+                    32
+                  ]
+                }
+              },
+              {
+                "name": "generation",
+                "type": "u64"
+              }
+            ]
+          },
+          {
+            "name": "Batch",
+            "fields": [
+              {
+                "name": "members",
+                "type": {
+                  "vec": {
+                    "array": [
+                      "u8",
+                      32
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "name": "Pack"
+          }
+        ]
+      }
+    },
+    {
+      "name": "RestoreAccountSnapshot",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "lamports",
+            "type": "u64"
+          },
+          {
+            "name": "executable",
+            "type": "bool"
+          },
+          {
+            "name": "rent_epoch",
+            "type": "u64"
+          },
+          {
+            "name": "data",
+            "type": "bytes"
+          }
+        ]
+      }
+    },
+    {
+      "name": "RestoreHashFingerprint",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "source_kind",
+            "type": "u8"
+          },
+          {
+            "name": "created_at",
+            "type": "i64"
+          },
+          {
+            "name": "generation",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "RestoreParameters",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Hash",
+            "fields": [
+              {
+                "name": "payload",
+                "type": "bytes"
+              }
+            ]
+          },
+          {
+            "name": "Account",
+            "fields": [
+              {
+                "name": "snapshot",
+                "type": {
+                  "option": {
+                    "defined": {
+                      "name": "RestoreAccountSnapshot"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "name": "Branch",
+            "fields": [
+              {
+                "name": "parent",
+                "type": {
+                  "defined": {
+                    "name": "RestoreHashFingerprint"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "name": "Batch",
+            "fields": [
+              {
+                "name": "members",
+                "type": {
+                  "vec": {
+                    "defined": {
+                      "name": "RestoreHashFingerprint"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "name": "Pack",
+            "fields": [
+              {
+                "name": "members",
+                "type": {
+                  "vec": {
+                    "defined": {
+                      "name": "RestoreHashFingerprint"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "RestoreProofLink",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "source",
+            "type": {
+              "defined": {
+                "name": "HashSource"
+              }
+            }
+          },
+          {
+            "name": "created_at",
+            "type": "i64"
+          },
+          {
+            "name": "params",
+            "type": {
+              "option": {
+                "defined": {
+                  "name": "RestoreParameters"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "VoteInfo",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "voter",
+            "type": "pubkey"
+          },
+          {
+            "name": "hash_id",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    }
+  ]
+}

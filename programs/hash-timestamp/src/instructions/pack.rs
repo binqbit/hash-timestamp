@@ -1,19 +1,17 @@
 use anchor_lang::prelude::*;
 
-use crate::logic::{compose_pack, create_hash_and_vote, AccountFingerprint};
-use crate::state::{HashAccount, HashSource};
-use crate::utils::read_account;
-use crate::ErrorCode;
+use crate::runtime::aggregate::{AggregateKind, VerifiedMembers};
+use crate::runtime::{hash_record::NewHashRecord, record_lifecycle::RecordWriter};
 
 #[derive(Accounts)]
 pub struct Pack<'info> {
     /// CHECK: Created and initialized within this instruction.
     #[account(mut)]
-    pub pack_hash_account: AccountInfo<'info>,
+    pub hash_account: UncheckedAccount<'info>,
 
     /// CHECK: Created and initialized within this instruction.
     #[account(mut)]
-    pub vote_info: AccountInfo<'info>,
+    pub vote_info: UncheckedAccount<'info>,
 
     #[account(mut)]
     pub payer: Signer<'info>,
@@ -21,48 +19,19 @@ pub struct Pack<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn pack(ctx: Context<Pack>) -> Result<()> {
-    let pack_account = &ctx.accounts.pack_hash_account;
-    let vote_account = &ctx.accounts.vote_info;
-    let payer = &ctx.accounts.payer;
-    let payer_account = payer.to_account_info();
-    let payer_key = payer.key();
-    let system_program = ctx.accounts.system_program.to_account_info();
-    let program_id = ctx.program_id;
+pub fn pack<'info>(ctx: Context<'_, '_, '_, 'info, Pack<'info>>) -> Result<()> {
+    let accounts = ctx.accounts;
+    let members =
+        VerifiedMembers::load(ctx.program_id, ctx.remaining_accounts, AggregateKind::Pack)?;
+    let (source, hash) = members.compose()?;
+    let record = NewHashRecord::now(source, hash)?;
 
-    require!(
-        !ctx.remaining_accounts.is_empty(),
-        ErrorCode::PackMembersEmpty
+    let writer = RecordWriter::new(ctx.program_id, &accounts.payer, &accounts.system_program);
+    writer.create_with_initial_vote(&accounts.hash_account, &accounts.vote_info, record)?;
+    crate::debug_log!(
+        "checkpoint=instruction.done instruction=pack payer={} hash={}",
+        accounts.payer.key(),
+        accounts.hash_account.key()
     );
-
-    let mut members: Vec<AccountFingerprint> = Vec::with_capacity(ctx.remaining_accounts.len());
-
-    for account_info in ctx.remaining_accounts.iter() {
-        require!(
-            *account_info.owner == *program_id,
-            ErrorCode::PackMemberWrongProgram
-        );
-
-        let hash_account: HashAccount = read_account(account_info)?;
-        hash_account.verify_account(program_id, account_info)?;
-        require!(hash_account.created_at != 0, ErrorCode::HashNotFound);
-
-        members.push(AccountFingerprint::from_account(&hash_account));
-    }
-
-    let pack_hash = compose_pack(&members)?;
-    let source = HashSource::pack();
-
-    create_hash_and_vote(
-        program_id,
-        &payer_account,
-        &system_program,
-        pack_account,
-        vote_account,
-        source,
-        pack_hash,
-        &payer_key,
-    )?;
-
     Ok(())
 }

@@ -1,17 +1,17 @@
 use anchor_lang::prelude::*;
 
-use crate::logic::create_hash_and_vote;
+use crate::runtime::{hash_record::NewHashRecord, record_lifecycle::RecordWriter};
 use crate::state::HashSource;
 
 #[derive(Accounts)]
 pub struct Register<'info> {
     /// CHECK: Created and initialized within this instruction.
     #[account(mut)]
-    pub hash_account: AccountInfo<'info>,
+    pub hash_account: UncheckedAccount<'info>,
 
     /// CHECK: Created and initialized within this instruction.
     #[account(mut)]
-    pub vote_info: AccountInfo<'info>,
+    pub vote_info: UncheckedAccount<'info>,
 
     #[account(mut)]
     pub user: Signer<'info>,
@@ -19,24 +19,15 @@ pub struct Register<'info> {
 }
 
 pub fn register(ctx: Context<Register>, hash: [u8; 32]) -> Result<()> {
-    let user = &ctx.accounts.user;
-    let payer_account = user.to_account_info();
-    let hash_account = &ctx.accounts.hash_account;
-    let vote_account = &ctx.accounts.vote_info;
-    let system_program = ctx.accounts.system_program.to_account_info();
+    let accounts = ctx.accounts;
+    let record = NewHashRecord::now(HashSource::register(), hash)?;
 
-    let source = HashSource::register();
-    let user_key = user.key();
-    create_hash_and_vote(
-        ctx.program_id,
-        &payer_account,
-        &system_program,
-        hash_account,
-        vote_account,
-        source,
-        hash,
-        &user_key,
-    )?;
-
+    let writer = RecordWriter::new(ctx.program_id, &accounts.user, &accounts.system_program);
+    writer.create_with_initial_vote(&accounts.hash_account, &accounts.vote_info, record)?;
+    crate::debug_log!(
+        "checkpoint=instruction.done instruction=register hash={} voter={}",
+        accounts.hash_account.key(),
+        accounts.user.key()
+    );
     Ok(())
 }

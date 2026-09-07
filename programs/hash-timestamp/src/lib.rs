@@ -1,11 +1,25 @@
+//! Hash Timestamp program entrypoints.
+//!
+//! Each `instructions` handler owns its scenario and account context.
+//! `protocol` owns deterministic hashes/addresses; `runtime` owns account
+//! validation and mutation; `state` owns persisted data.
+
 use anchor_lang::prelude::*;
 
 declare_id!("HTSx1wheA1TnHSEbKWxmtXKgJNyRfF3QxeK2hHQcJ9pN");
 
+mod telemetry;
+
+pub mod error;
 pub mod instructions;
-pub mod logic;
+mod protocol;
+mod runtime;
 pub mod state;
-pub mod utils;
+
+pub use error::ErrorCode;
+
+#[cfg(test)]
+mod compatibility_tests;
 
 use instructions::handlers;
 use instructions::*;
@@ -14,76 +28,51 @@ use instructions::*;
 pub mod hash_timestamp {
     use super::*;
 
-    // Register a new hash account (genesis or standalone hash).
+    /// Register a new hash account with the given hash payload.
     pub fn register(ctx: Context<Register>, hash: [u8; 32]) -> Result<()> {
         handlers::register(ctx, hash)
     }
 
-    // Produce a hash account from an arbitrary account's metadata.
+    /// Produce a hash account from an arbitrary account's metadata.
     pub fn account(ctx: Context<AccountHash>) -> Result<()> {
         handlers::account_hash(ctx)
     }
 
-    // Pack existing hash accounts into a minimal composite hash.
-    pub fn pack(ctx: Context<Pack>) -> Result<()> {
-        handlers::pack(ctx)
-    }
-
-    // Derive a new hash from an existing one and optionally migrate the caller's vote.
+    /// Derive a new hash from an existing one and optionally migrate the caller's vote.
     pub fn branch(ctx: Context<Branch>, payload: [u8; 32], take_vote: bool) -> Result<()> {
         handlers::branch(ctx, payload, take_vote)
     }
 
-    // Create a batch hash that aggregates several existing hashes.
-    pub fn batch(ctx: Context<Batch>) -> Result<()> {
+    /// Create a batch hash that aggregates several existing hashes.
+    pub fn batch<'info>(ctx: Context<'_, '_, '_, 'info, Batch<'info>>) -> Result<()> {
         handlers::batch(ctx)
     }
 
-    // Vote for a hash; create the hash account if missing;
-    // deposit exactly the rent-exempt minimum for this account size.
+    /// Pack existing hash accounts into a minimal composite hash.
+    pub fn pack<'info>(ctx: Context<'_, '_, '_, 'info, Pack<'info>>) -> Result<()> {
+        handlers::pack(ctx)
+    }
+
+    /// Restore previously existing hashes by proving ancestry from a known chain tip.
+    pub fn restore<'info>(
+        ctx: Context<'_, '_, '_, 'info, Restore<'info>>,
+        proof_chain: Vec<RestoreProofLink>,
+    ) -> Result<()> {
+        handlers::restore(ctx, proof_chain)
+    }
+
+    /// Vote for a hash and deposit exactly the rent-exempt minimum for this account size.
     pub fn vote(ctx: Context<Vote>) -> Result<()> {
         handlers::vote(ctx)
     }
 
-    // Remove caller's vote and withdraw their deposit; auto-close if zero voters remain.
+    /// Remove caller's vote and withdraw their deposit; auto-close if zero voters remain.
     pub fn unvote(ctx: Context<Unvote>) -> Result<()> {
         handlers::unvote(ctx)
     }
 
-    // Verify that the hash account exists (no-op if OK).
+    /// Verify the integrity and authenticity of a hash account.
     pub fn verify(ctx: Context<Verify>) -> Result<()> {
         handlers::verify(ctx)
     }
-}
-
-#[error_code]
-pub enum ErrorCode {
-    #[msg("Hash not found")]
-    HashNotFound,
-    #[msg("Invalid hash PDA seeds")]
-    InvalidHashSeeds,
-    #[msg("Already voted for this hash")]
-    AlreadyVoted,
-    #[msg("Caller is not the voter")]
-    NotVoter,
-    #[msg("Votes are not zero")]
-    VotesNotZero,
-    #[msg("Derived hash mismatch")]
-    DerivedHashMismatch,
-    #[msg("Expected vote account for migration")]
-    VoteAccountMissing,
-    #[msg("Vote migration requested but no vote exists")]
-    NoVoteToMigrate,
-    #[msg("Hash generation overflowed")]
-    GenerationOverflow,
-    #[msg("Hash already exists")]
-    HashAlreadyExists,
-    #[msg("Batch requires at least one member")]
-    BatchMembersEmpty,
-    #[msg("Batch member account not owned by the program")]
-    BatchMemberWrongProgram,
-    #[msg("Pack requires at least one member")]
-    PackMembersEmpty,
-    #[msg("Pack member account not owned by the program")]
-    PackMemberWrongProgram,
 }
