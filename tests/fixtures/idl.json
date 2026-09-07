@@ -2,7 +2,7 @@
   "address": "HTSx1wheA1TnHSEbKWxmtXKgJNyRfF3QxeK2hHQcJ9pN",
   "metadata": {
     "name": "hash_timestamp",
-    "version": "3.0.0",
+    "version": "4.0.0",
     "spec": "0.1.0",
     "description": "A smart contract that fixes the timestamp of a hash"
   },
@@ -246,7 +246,7 @@
         {
           "name": "anchor_hash_account",
           "docs": [
-            "Verified inside `restore_from_chain`."
+            "Verified by the restore preflight before execution."
           ]
         },
         {
@@ -347,6 +347,9 @@
         },
         {
           "name": "vote_info",
+          "docs": [
+            "then creates and initializes the caller's vote."
+          ],
           "writable": true
         },
         {
@@ -572,6 +575,11 @@
     },
     {
       "name": "HashSource",
+      "docs": [
+        "Describes how a hash record entered the history graph.",
+        "",
+        "Variant order is both Borsh ABI and part of the canonical hash identity."
+      ],
       "type": {
         "kind": "enum",
         "variants": [

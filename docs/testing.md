@@ -54,8 +54,10 @@ Selecting an RPC cluster does not change the compiled address.
 
 `yarn build` generates SBF and IDL/types and checks the interface and address.
 It does not deploy or start a validator. `yarn test` uses the same identity,
-with debug logs enabled. Cargo arguments may follow `--`, such as
-`yarn build -- --offline`.
+with debug logs enabled. Pass Cargo arguments directly to the wrapper after `--`,
+for example `./scripts/test.sh --build-only -- --offline --locked`.
+Yarn 1 consumes its own `--` separator, so use the direct wrapper form for these
+arguments.
 
 Building does not require the program's private key. Deployment is a separate
 operation requiring the matching program key and target cluster.
@@ -94,8 +96,9 @@ falling through to a keypair-based deployment. Stop the validator with Ctrl-C.
 - `tests/integration/**/*.spec.ts`: real instruction scenarios.
 - `tests/support/`: assertions, provider/account setup, clock polling and proof fixtures.
 - Rust `#[cfg(test)]` modules: protocol rules, state invariants and runtime helpers.
-- `tests/fixtures/idl-v3.json`: reviewed ABI baseline; update only for an
-  intentional, versioned interface change.
+- `tests/fixtures/idl.json`: reviewed IDL baseline for the current program release.
+  Keep its release metadata aligned with the program's Cargo manifest; changes
+  to the interface require an explicit compatibility review.
 
 Quoted recursive globs discover specs automatically. Put new specs in their
 unit/integration directory, not `tests/` itself. Empty selections, `.only`
@@ -114,23 +117,6 @@ and skipped/pending tests fail the normal commands. Integration cases have a
 - `check:idl` compares generated IDL with the baseline, ignoring documentation
   text only, and checks the configured program addresses.
   Rebuild stale generated artifacts before running it.
-
-Execution results and mutation experiments belong in the dated
-[review records](../debug-tools/tests_review.md).
-
-## Diagnostic controls
-
-```bash
-node debug-tools/test_runner_probe.cjs
-node debug-tools/aggregate_kind_mutation.cjs
-```
-
-The runner probe exits 0 after checking that valid tests pass and
-empty/focused/pending fixtures fail. Fixtures are outside normal discovery.
-
-The mutation probe intentionally forces aggregate member kinds to Hash in its
-own process. It should exit 1 with the two mixed-source Batch/Pack cases failing.
-It does not edit source files or send transactions; it is not a normal green gate.
 
 ## Formatting
 

@@ -49,7 +49,7 @@ describe("hash utility public key normalization", () => {
   });
 });
 
-describe("protocol v3 compatibility vectors", () => {
+describe("protocol compatibility vectors", () => {
   const programId = new PublicKey(
     "4qHXrn8Z72fmDyvBBafJV7QujMJ7jKesa8C6zqcZry5k"
   );

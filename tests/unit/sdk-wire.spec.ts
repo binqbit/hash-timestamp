@@ -17,7 +17,7 @@ describe("SDK pinned Anchor wire compatibility", () => {
     // The pinned ABI keeps this unit test independent of build artifacts.
     // check:idl separately verifies the generated IDL; no RPC is invoked here.
     const idl = JSON.parse(
-      readFileSync(resolve("tests/fixtures/idl-v3.json"), "utf8")
+      readFileSync(resolve("tests/fixtures/idl.json"), "utf8")
     );
     const program = new Program<HashTimestamp>(idl, {
       connection: new Connection("http://127.0.0.1:8899"),

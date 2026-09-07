@@ -9,7 +9,7 @@ const projectRoot = path.resolve(__dirname, "..");
 function parseArguments(argv) {
   const options = {
     actual: path.join(projectRoot, "target/idl/hash_timestamp.json"),
-    baseline: path.join(projectRoot, "tests/fixtures/idl-v3.json"),
+    baseline: path.join(projectRoot, "tests/fixtures/idl.json"),
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -154,7 +154,7 @@ function main() {
       process.exitCode = 1;
     } else {
       console.log(
-        "IDL interface and program address match the v3 compatibility baseline."
+        `IDL interface and program address match the ${expected.metadata.version} compatibility baseline.`
       );
     }
   } catch (error) {

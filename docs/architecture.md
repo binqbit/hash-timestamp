@@ -175,6 +175,6 @@ must use the appropriate account size.
 Instruction signatures, ordered accounts, field/variant layouts, errors, PDA
 seeds, digest framing and allocated sizes are protocol contracts. Internal
 refactoring must preserve them. The reviewed IDL baseline is
-`tests/fixtures/idl-v3.json`; intentional ABI changes require a versioned migration.
+`tests/fixtures/idl.json`; intentional ABI changes require a versioned migration.
 
 See [compatibility gates](testing.md#coverage-and-compatibility-gates) for validation.

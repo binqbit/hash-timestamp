@@ -20,7 +20,7 @@ describe("program build workflow", () => {
       "Anchor.toml",
       "scripts/test.sh",
       "scripts/check-idl.cjs",
-      "tests/fixtures/idl-v3.json",
+      "tests/fixtures/idl.json",
       "tests/fixtures/build-driver.cjs",
     ]) {
       const destination = path.join(fixture, file);
@@ -87,6 +87,19 @@ describe("program build workflow", () => {
     assert.ifError(result.error);
     return result;
   }
+
+  it("keeps the IDL baseline version aligned with the program release", () => {
+    const manifest = fs.readFileSync(
+      path.join(repository, "programs/hash-timestamp/Cargo.toml"),
+      "utf8"
+    );
+    const version = manifest.match(/^version = "([^"]+)"$/m)?.[1];
+    assert.ok(version, "program package version must be declared");
+    const baseline = JSON.parse(
+      fs.readFileSync(path.join(fixture, "tests/fixtures/idl.json"), "utf8")
+    );
+    assert.equal(baseline.metadata.version, version);
+  });
 
   it("builds the program without deployment or test execution", () => {
     const result = run(["--build-only"]);
@@ -219,6 +232,9 @@ describe("program build workflow", () => {
     const file = path.join(fixture, "target/idl/hash_timestamp.json");
     const original = JSON.parse(fs.readFileSync(file, "utf8"));
     for (const mutate of [
+      (idl: any) => {
+        idl.metadata.version = "0.0.0";
+      },
       (idl: any) => {
         delete idl.address;
       },

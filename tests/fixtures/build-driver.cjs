@@ -11,7 +11,7 @@ if (args[0] === "--version") {
 fs.appendFileSync(process.env.BUILD_TEST_CALLS, JSON.stringify(args) + "\n");
 if (args[0] === "build") {
   if (process.env.BUILD_TEST_FAIL === "1") process.exit(7);
-  const idl = JSON.parse(fs.readFileSync("tests/fixtures/idl-v3.json", "utf8"));
+  const idl = JSON.parse(fs.readFileSync("tests/fixtures/idl.json", "utf8"));
   idl.address = process.env.BUILD_TEST_ADDRESS || idl.address;
   fs.mkdirSync("target/idl", { recursive: true });
   fs.mkdirSync("target/deploy", { recursive: true });
