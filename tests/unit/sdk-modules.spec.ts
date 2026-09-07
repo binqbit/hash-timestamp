@@ -111,6 +111,8 @@ describe("SDK module compatibility", () => {
         "selectArchive",
         "archiveFromProof",
         "buildRestoreProof",
+        "ArchiveCaptureError",
+        "ArchiveRestoreExecutionError",
       ].sort()
     );
     const leaves: any = {

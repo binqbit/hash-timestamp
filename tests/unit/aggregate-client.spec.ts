@@ -1,4 +1,5 @@
 import { expect } from "chai";
+import { mockCapture } from "../support/archive-fixtures";
 import { BN, Program } from "@coral-xyz/anchor";
 import { Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
 import { HashTimestamp } from "../../target/types/hash_timestamp";
@@ -8,6 +9,8 @@ import {
   canonicalHashId,
   deriveBatchHash,
   deriveGenesisHashId,
+  decodeHashSource,
+  hashSourceKindOf,
 } from "../../app/sdk/hashTimestamp";
 
 type Aggregate = "batch" | "pack";
@@ -42,6 +45,23 @@ function fixture() {
       return builder;
     },
     async rpc() {
+      const order = captured.remaining!.map((meta) =>
+        ids.findIndex((id) => client.hashPda(id).equals(meta.pubkey))
+      );
+      const digest = deriveBatchHash(
+        order.map((i) => ({
+          hash: snapshots[i].hash,
+          kind: hashSourceKindOf(decodeHashSource(snapshots[i].source)),
+          createdAt: snapshots[i].createdAt ?? snapshots[i].created_at,
+        }))
+      );
+      mockCapture(
+        program,
+        digest,
+        captured.instruction === "batch"
+          ? { kind: "batch", members: order.map((i) => ids[i]) }
+          : { kind: "pack" }
+      );
       return "test-signature";
     },
   };

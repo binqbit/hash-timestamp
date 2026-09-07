@@ -28,11 +28,12 @@ export async function registerFile(
 ) {
   const fileHash = createHash("sha256").update(bytes).digest();
   const hashId = deriveGenesisHashId(fileHash);
-  const signature = await client.register(fileHash);
+  const { signature, archive } = await client.register(fileHash);
   const record = await client.fetchHashAccount(hashId);
   if (!record) throw new Error("Registered hash record was not found");
   return {
     signature,
+    archive,
     fileHash,
     hashId,
     address: client.hashPda(hashId),
@@ -65,7 +66,7 @@ export async function branchFromFile(
     payload
   );
   const childId = deriveBranchHashId(childHash);
-  const signature = await client.branch(parentId, payload, false);
+  const { signature, archive } = await client.branch(parentId, payload, false);
   const child = await client.fetchHashAccount(childId);
   if (!child) throw new Error("Branch hash record was not found");
 
@@ -93,6 +94,7 @@ export async function branchFromFile(
   ];
   return {
     signature,
+    archive,
     childId,
     parentId: canonicalHashId(parent.hash, parentSource),
     proof,

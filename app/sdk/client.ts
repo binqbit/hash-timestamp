@@ -19,8 +19,9 @@ import {
   HashBytes,
   HashSourceKind,
   RestoreProofInput,
+  CreationResult,
 } from "./types";
-import { to32Bytes } from "./protocol/normalization";
+import { to32Bytes, numberToU64 } from "./protocol/normalization";
 import {
   canonicalHashId,
   deriveAccountMetadataHash,
@@ -39,6 +40,18 @@ import {
 } from "./client/aggregate";
 import { instructionPayer, submitInstruction } from "./client/transactions";
 import { prepareRestore } from "./restore";
+import { submitCreation } from "./client/archive";
+import { archiveHex, archiveSource } from "./archive/values";
+import type { HashArchive } from "./archive/model";
+import type {
+  ArchiveRestoreOptions,
+  ArchiveRestorePlan,
+  ArchiveRestoreResult,
+} from "./archive/planning";
+import {
+  planArchiveRestore,
+  executeArchiveRestore,
+} from "./client/archive-restore";
 
 /** High-level transaction and RPC API. Pass an Anchor Program configured for your cluster. */
 export class HashTimestampClient {
@@ -66,11 +79,8 @@ export class HashTimestampClient {
     return deriveVotePda(this.programId, hashId, voter);
   }
 
-  /** Register a raw 32-byte hash and vote for it. Returns a transaction signature. */
-  async register(
-    hash: HashBytes,
-    payer?: Keypair
-  ): Promise<TransactionSignature> {
+  /** Register a raw hash and return its one-node archive after confirmation. */
+  async register(hash: HashBytes, payer?: Keypair): Promise<CreationResult> {
     const hashBytes = to32Bytes(hash);
     const hashIdBytes = deriveGenesisHashId(hashBytes);
     const walletPk = instructionPayer(this.program.provider, payer);
@@ -86,7 +96,12 @@ export class HashTimestampClient {
         systemProgram: SystemProgram.programId,
       });
 
-    return submitInstruction(builder, payer);
+    return submitCreation(
+      this.program,
+      builder,
+      { hash: archiveHex(hashBytes), source: { kind: "hash" } },
+      payer
+    );
   }
 
   /** Vote for an existing canonical ID. The signer funds the vote account. */
@@ -145,7 +160,7 @@ export class HashTimestampClient {
     payload: HashBytes,
     takeVote = true,
     payer?: Keypair
-  ): Promise<TransactionSignature> {
+  ): Promise<CreationResult> {
     const walletPk = instructionPayer(this.program.provider, payer);
     const oldHashIdBytes = to32Bytes(oldHashId);
     const payloadBytes = to32Bytes(payload);
@@ -180,7 +195,20 @@ export class HashTimestampClient {
         systemProgram: SystemProgram.programId,
       });
 
-    return submitInstruction(builder, payer);
+    return submitCreation(
+      this.program,
+      builder,
+      {
+        hash: archiveHex(newHash),
+        source: archiveSource({
+          kind: "branch",
+          previousHashId: oldHashIdBytes,
+          payload: payloadBytes,
+          generation: parent.generation + 1n,
+        }),
+      },
+      payer
+    );
   }
 
   /** Read ordered canonical IDs, then create a batch. Member order affects identity. */
@@ -219,9 +247,16 @@ export class HashTimestampClient {
         }))
       );
 
-    const signature = await submitInstruction(builder, payer);
-
-    return { signature, batchId };
+    const result = await submitCreation(
+      this.program,
+      builder,
+      {
+        hash: archiveHex(batchHash),
+        source: { kind: "batch", members: memberIdBytes.map(archiveHex) },
+      },
+      payer
+    );
+    return { ...result, batchId };
   }
 
   /** Read ordered canonical IDs, then create a pack. Member order affects identity. */
@@ -259,9 +294,17 @@ export class HashTimestampClient {
         }))
       );
 
-    const signature = await submitInstruction(builder, payer);
-
-    return { signature, packId };
+    const result = await submitCreation(
+      this.program,
+      builder,
+      {
+        hash: archiveHex(packHash),
+        source: { kind: "pack" },
+        members: memberPdas.map((pda) => pda.toBase58()),
+      },
+      payer
+    );
+    return { ...result, packId };
   }
 
   /** Read a Solana account snapshot, then submit its metadata commitment. */
@@ -275,11 +318,22 @@ export class HashTimestampClient {
     if (!info) {
       throw new Error("target account not found");
     }
+    if (info.rentEpoch === undefined)
+      throw new Error("RPC snapshot is missing rentEpoch");
 
     const metadataHash = deriveAccountMetadataHash(target, info);
     const hashId = canonicalHashId(metadataHash, HashSourceKind.Account);
     const hashPda = this.hashPda(hashId);
     const votePda = this.votePda(hashId, walletPk);
+
+    // Retain the same snapshot used to derive the destination, before submission.
+    const snapshot = {
+      owner: info.owner.toBase58(),
+      lamports: numberToU64(info.lamports).toString(),
+      executable: info.executable,
+      rentEpoch: numberToU64(info.rentEpoch).toString(),
+      data: [...info.data],
+    };
 
     const builder = this.program.methods.account().accountsStrict({
       hashAccount: hashPda,
@@ -289,9 +343,17 @@ export class HashTimestampClient {
       systemProgram: SystemProgram.programId,
     });
 
-    const signature = await submitInstruction(builder, payer);
-
-    return { signature, hashId, metadataHash };
+    const result = await submitCreation(
+      this.program,
+      builder,
+      {
+        hash: archiveHex(metadataHash),
+        source: { kind: "account", account: target.toBase58() },
+        snapshot,
+      },
+      payer
+    );
+    return { ...result, hashId, metadataHash };
   }
 
   /** RPC read by canonical ID. Returns raw Anchor data (BN integers, IDL source enum). */
@@ -308,6 +370,41 @@ export class HashTimestampClient {
     const hashIdBytes = to32Bytes(hashId);
     const votePda = this.votePda(hashIdBytes, voter);
     return fetchNullableAccount(this.program.account.voteInfo, votePda);
+  }
+
+  /** Read live anchors and compile transaction-sized proofs without signing or sending. */
+  async planRestore(
+    archive: HashArchive,
+    options: ArchiveRestoreOptions,
+    payer?: Keypair
+  ): Promise<ArchiveRestorePlan> {
+    const signer = instructionPayer(this.program.provider, payer);
+    const feePayer = instructionPayer(this.program.provider);
+    return planArchiveRestore(this.program, archive, options, signer, feePayer);
+  }
+
+  async executeRestorePlan(
+    plan: ArchiveRestorePlan,
+    options: { allowAdditionalRecords?: boolean } = {},
+    payer?: Keypair
+  ): Promise<ArchiveRestoreResult> {
+    return executeArchiveRestore(
+      this.program,
+      plan,
+      payer,
+      instructionPayer(this.program.provider, payer),
+      instructionPayer(this.program.provider),
+      options.allowAdditionalRecords === true
+    );
+  }
+
+  async restoreArchive(
+    archive: HashArchive,
+    options: ArchiveRestoreOptions & { allowAdditionalRecords?: boolean },
+    payer?: Keypair
+  ): Promise<ArchiveRestoreResult> {
+    const plan = await this.planRestore(archive, options, payer);
+    return this.executeRestorePlan(plan, options, payer);
   }
 
   /** Submit a restoration proof. Proof-only mode is still an on-chain transaction. */

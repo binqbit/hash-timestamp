@@ -1,6 +1,7 @@
 import type { BN, IdlAccounts } from "@coral-xyz/anchor";
 import type { PublicKey, TransactionSignature } from "@solana/web3.js";
 import type { HashTimestamp } from "../../target/types/hash_timestamp";
+import type { HashArchive } from "./archive/model";
 
 export const HASH_ACCOUNT_BASE_SIZE =
   8 /*disc*/ + 32 /*hash*/ + 8 /*voters*/ + 8 /*created_at*/ + 1; /*bump*/
@@ -92,18 +93,20 @@ export interface RestoreResult {
   restoredIds: Uint8Array[];
 }
 
-export interface BatchResult {
+export interface CreationResult {
   signature: TransactionSignature;
+  archive: HashArchive;
+}
+
+export interface BatchResult extends CreationResult {
   batchId: Uint8Array;
 }
 
-export interface PackResult {
-  signature: TransactionSignature;
+export interface PackResult extends CreationResult {
   packId: Uint8Array;
 }
 
-export interface AccountHashResult {
-  signature: TransactionSignature;
+export interface AccountHashResult extends CreationResult {
   hashId: Uint8Array;
   metadataHash: Uint8Array;
 }

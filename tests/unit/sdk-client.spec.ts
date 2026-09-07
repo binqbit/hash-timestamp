@@ -1,4 +1,5 @@
 import { expect } from "chai";
+import { mockCapture } from "../support/archive-fixtures";
 import { BN, Program } from "@coral-xyz/anchor";
 import {
   AccountInfo,
@@ -106,6 +107,7 @@ function fixture() {
   const client = new HashTimestampClient(
     program as unknown as Program<HashTimestamp>
   );
+  mockCapture(program, rawHash, { kind: "hash" });
   return {
     client,
     program,
@@ -146,7 +148,9 @@ describe("SDK client boundaries", () => {
           operation === "register" ? rawHash : hashId,
           payer
         );
-        expect(result).to.equal("test-signature");
+        expect(typeof result === "string" ? result : result.signature).to.equal(
+          "test-signature"
+        );
         expect(capture.args).to.deep.equal(
           operation === "register" ? [[...rawHash]] : []
         );
@@ -241,9 +245,15 @@ describe("SDK client boundaries", () => {
         pdaIds.push(to32Bytes(id));
         return derivePda(id);
       };
-      expect(await client.branch(hashId, payload, takeVote)).to.equal(
-        "test-signature"
-      );
+      mockCapture(program, derivedHash, {
+        kind: "branch",
+        previousHashId: hashId,
+        payload,
+        generation: 3n,
+      });
+      expect(
+        (await client.branch(hashId, payload, takeVote)).signature
+      ).to.equal("test-signature");
       expect(reads).to.deep.equal([hashId]);
       expect(pdaIds).to.deep.equal([hashId, childId]);
       expect(capture.args).to.deep.equal([[...payload], takeVote !== false]);
@@ -282,7 +292,12 @@ describe("SDK client boundaries", () => {
     };
     const metadataHash = deriveAccountMetadataHash(target, targetInfo);
     const expectedId = canonicalHashId(metadataHash, HashSourceKind.Account);
-    expect(await client.hashAccount(target)).to.deep.equal({
+    mockCapture(program, metadataHash, { kind: "account", account: target });
+    const { archive, ...result } = await client.hashAccount(target);
+    expect(Object.keys(archive.nodes)).to.deep.equal([
+      client.hashPda(expectedId).toBase58(),
+    ]);
+    expect(result).to.deep.equal({
       signature: "test-signature",
       hashId: expectedId,
       metadataHash,
