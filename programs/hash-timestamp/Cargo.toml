@@ -1,6 +1,6 @@
 [package]
 name = "hash-timestamp"
-version = "3.0.0"
+version = "4.0.0"
 description = "A smart contract that fixes the timestamp of a hash"
 edition = "2021"
 
