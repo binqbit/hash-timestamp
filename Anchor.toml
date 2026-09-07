@@ -6,7 +6,13 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-hash_timestamp = "HTSx1VNWNBDGtfwr2nU8gSzhxfFtUxd2nkdFq7SCSZzY"
+hash_timestamp = "HTSx1wheA1TnHSEbKWxmtXKgJNyRfF3QxeK2hHQcJ9pN"
+
+[programs.devnet]
+hash_timestamp = "HTSx1wheA1TnHSEbKWxmtXKgJNyRfF3QxeK2hHQcJ9pN"
+
+[programs.testnet]
+hash_timestamp = "HTSx1wheA1TnHSEbKWxmtXKgJNyRfF3QxeK2hHQcJ9pN"
 
 [registry]
 url = "https://api.apr.dev"
